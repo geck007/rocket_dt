@@ -33,6 +33,9 @@ same lift model rather than from separate empirical damping terms:
   canard / fin pair, depends on the fin-can angle, and acts on roll, pitch and
   yaw alike. Not modelled: vortex self-induced motion, convection delay, vortices
   shed by the body.
+* Canard hinge moments: every strip's normal force acts at its local quarter
+  chord; the moment about the hinge line (a radial line at ``hinge_from_root_le``,
+  default the planform area centroid) is positive when it increases the deflection.
 * Axial force: zero-lift drag build-up (skin friction with roughness limit,
   pressure, base and fin edge drag) times OpenRocket's angle-of-attack multiplier.
 
@@ -119,6 +122,7 @@ class AeroResult:
     moment: np.ndarray  # about CG, body frame, N m
     fincan_roll_moment: float  # aerodynamic roll moment acting on the fin can, N m
     diag: dict | None = None
+    hinge_moment: np.ndarray | None = None  # per canard, N m, positive = increases deflection
 
 
 @dataclass
@@ -134,7 +138,8 @@ class _Vortices:
 class AeroModel:
     def __init__(self, ork: OrkRocket, fincan_paths: set[str], canard_path: str | None,
                  fin_misalignment: dict[str, list[float]], drag_scale: float = 1.0,
-                 canard_vortex: CanardVortexConfig | None = None, slice_length: float = 0.025):
+                 canard_vortex: CanardVortexConfig | None = None, canard_hinge: float | None = None,
+                 slice_length: float = 0.025):
         self.ref_length = reference_length(ork)
         self.ref_area = math.pi * self.ref_length ** 2 / 4.0
         self.length = rocket_length(ork)
@@ -194,6 +199,14 @@ class AeroModel:
             raise ValueError("The canards cannot be part of the fin can")
         self.n_canards = next((f.count for f in self.fins if f.is_canard), 0)
         canards = next((f for f in self.fins if f.is_canard), None)
+        if canards is not None:
+            pf = canards.planform
+            hinge = pf.centroid_x if canard_hinge is None else canard_hinge
+            if not 0.0 <= hinge <= float((pf.le + pf.chord).max()):
+                raise ValueError(f"Canard hinge {hinge} m from the root LE is outside the canard")
+            self.canard_hinge = hinge
+            # hinge arm of each strip: hinge line minus local quarter chord (both from the root LE)
+            self._hinge_arm = hinge - (pf.le + 0.25 * pf.chord)
         # canards first, so their vortices are known when the fin sets behind them are evaluated
         self._eval_order = sorted(self.fins, key=lambda f: not f.is_canard)
         self._vortex_targets = {id(f) for f in self.fins if canards is not None and not f.is_canard
@@ -307,7 +320,8 @@ class AeroModel:
         """
         V = float(np.linalg.norm(v_b))
         if V < 1e-3:
-            return AeroResult(np.zeros(3), np.zeros(3), 0.0, {} if diagnostics else None)
+            return AeroResult(np.zeros(3), np.zeros(3), 0.0, {} if diagnostics else None,
+                              np.zeros(self.n_canards))
         q = 0.5 * rho * V * V
         mach = V / sound_speed
         beta = math.sqrt(max(1.0 - mach * mach, 0.05))
@@ -340,6 +354,7 @@ class AeroModel:
         # --- fins and canards
         fincan_roll = 0.0
         canard_roll = 0.0
+        hinge = np.zeros(self.n_canards)
         vortices = None
         vortex_roll = 0.0
         vortex_roll_each = np.zeros(self.n_canards)
@@ -380,6 +395,7 @@ class AeroModel:
                 fincan_roll += roll
             if f.is_canard:
                 canard_roll += roll
+                hinge = strip_f @ self._hinge_arm
                 if self._vortex_targets and u > 1e-3:
                     r_v = f.root_radius + 0.25 * math.pi * f.planform.span
                     gamma = self.vortex.strength_factor * fn / (rho * V * (r_v - f.root_radius ** 2 / r_v))
@@ -402,7 +418,7 @@ class AeroModel:
                     "ca": ca, "cn": float(math.hypot(force[1], force[2]) / (q * self.ref_area)),
                     "cn_alpha": cna, "cp_station": cp, "canard_roll_moment": canard_roll,
                     "vortex_roll_moment": vortex_roll, "vortex_roll_moment_each": vortex_roll_each}
-        return AeroResult(force, moment, fincan_roll, diag)
+        return AeroResult(force, moment, fincan_roll, diag, hinge)
 
 
     def _strip_loads(self, f: FinSetAero, alpha: np.ndarray, beta: float, q: float):

@@ -102,6 +102,7 @@ class FinPlanform:
     dy: np.ndarray  # strip widths
     centroid_x: float  # area centroid (from root LE)
     second_moments: tuple[float, float, float]  # ∫x'^2 dA, ∫y'^2 dA, ∫x'y' dA about centroid
+    le: np.ndarray  # leading-edge x at strip centres (from root LE)
 
 
 def fin_planform(points: list[tuple[float, float]], n_strips: int = 24) -> FinPlanform:
@@ -143,6 +144,7 @@ def fin_planform(points: list[tuple[float, float]], n_strips: int = 24) -> FinPl
 
     # Area centroid & second moments (for mass properties of a uniform plate)
     xc_strip = np.interp(yc, ys_fine, 0.5 * (le + te))
+    le_strip = xc_strip - 0.5 * chord
     a = chord * dy
     cx = float(np.sum(a * xc_strip) / area)
     cy = float(np.sum(a * yc) / area)
@@ -152,4 +154,4 @@ def fin_planform(points: list[tuple[float, float]], n_strips: int = 24) -> FinPl
 
     return FinPlanform(area=area, span=span, root_chord=float(c[0]), mac_length=mac_length, mac_lead=mac_lead,
                        mac_span=mac_span, midchord_sweep=midchord_sweep, le_sweep=le_sweep, y=yc, chord=chord,
-                       dy=dy, centroid_x=cx, second_moments=(sxx, syy, sxy))
+                       dy=dy, centroid_x=cx, second_moments=(sxx, syy, sxy), le=le_strip)

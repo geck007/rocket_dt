@@ -77,6 +77,9 @@ def run_montecarlo(cfg: Config) -> list[dict]:
                 values[path] = v
         # independent turbulence realisation per run
         set_by_path(raw, "environment.wind.turbulence.seed", int(rng.integers(0, 2 ** 31)))
+        # and independent sensor errors
+        if "sensors" in raw:
+            set_by_path(raw, "sensors.seed", int(rng.integers(0, 2 ** 31)))
         jobs.append((i, raw, base_dir, values))
     parse_config(jobs[0][1], Path(base_dir))  # fail fast on bad dispersion paths
     with mp.Pool(mc.processes) as pool:

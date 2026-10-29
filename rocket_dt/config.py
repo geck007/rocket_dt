@@ -130,6 +130,103 @@ class AeroConfig:
 
 
 @dataclass
+class CanardActuatorConfig:
+    """Canard servos, one per canard (see actuators.py). Placeholder values until bench tests."""
+    model: str = "ideal"  # "ideal" (follows the command instantly) | "servo" (second order + nonlinearities)
+    limit_deg: float = 15.0  # mechanical stop and command limit
+    natural_frequency_hz: float = 15.0  # closed-loop small-signal response (step test)
+    damping_ratio: float = 0.7
+    stiffness: float = 40.0  # N m/rad, holding stiffness under load (sets the inertia: J = K / wn^2)
+    stall_torque: float = 1.5  # N m
+    max_rate_dps: float = 500.0  # no-load speed (datasheet "0.12 s/60 deg" = 500 deg/s)
+    deadband_deg: float = 0.0  # servo does not react to position errors smaller than this (full width)
+    resolution_deg: float = 0.0  # command quantisation (PWM / DAC resolution)
+    backlash_deg: float = 0.0  # free play between servo output and canard (full width)
+    hinge_from_root_le: float | None = None  # m, chordwise hinge line position; None = planform area centroid
+
+
+@dataclass
+class ActuatorsConfig:
+    canards: CanardActuatorConfig = field(default_factory=CanardActuatorConfig)
+
+
+@dataclass
+class AccelConfig:
+    range_g: float = 16.0
+    bits: int = 16
+    noise_density_ug_rthz: float = 100.0  # white noise, micro-g / sqrt(Hz)
+    bias_sigma_mg: float = 20.0  # turn-on bias (drawn once per flight)
+    bias_instability_mg: float = 0.0  # slowly wandering bias (first-order Gauss-Markov)
+    bias_correlation_s: float = 100.0
+    scale_factor_sigma_pct: float = 0.5
+    misalignment_sigma_deg: float = 0.5  # axis non-orthogonality + mounting error
+
+
+@dataclass
+class GyroConfig:
+    range_dps: float = 2000.0
+    bits: int = 16
+    noise_density_mdps_rthz: float = 5.0  # milli-deg/s / sqrt(Hz)
+    bias_sigma_dps: float = 0.5
+    bias_instability_dps: float = 0.0
+    bias_correlation_s: float = 100.0
+    scale_factor_sigma_pct: float = 0.5
+    misalignment_sigma_deg: float = 0.5
+    g_sensitivity_dps_per_g: float = 0.0  # rate error caused by acceleration
+
+
+@dataclass
+class ImuConfig:
+    name: str
+    station: float  # m from the nose tip
+    enabled: bool = True
+    rate_hz: float = 500.0
+    latency_s: float = 0.0
+    offset_yz_m: list[float] = field(default_factory=lambda: [0.0, 0.0])  # lateral position, body y, z
+    orientation_deg: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])  # nominal mount roll, pitch, yaw
+    accel: AccelConfig = field(default_factory=AccelConfig)
+    gyro: GyroConfig = field(default_factory=GyroConfig)
+
+
+@dataclass
+class BaroConfig:
+    station: float  # m from the nose tip
+    enabled: bool = True
+    rate_hz: float = 50.0
+    latency_s: float = 0.0
+    noise_pa: float = 2.0
+    bias_sigma_pa: float = 100.0
+    resolution_pa: float = 1.2
+    lag_s: float = 0.02  # first-order lag of the vented bay / port
+    static_error_coeff: float = 0.0  # static-port error: measured - true pressure = coeff * dynamic pressure
+    temperature_noise_k: float = 0.1
+    temperature_bias_sigma_k: float = 1.0
+
+
+@dataclass
+class GnssConfig:
+    station: float  # antenna, m from the nose tip
+    enabled: bool = True
+    rate_hz: float = 10.0
+    latency_s: float = 0.1
+    horizontal_sigma_m: float = 1.5  # slowly varying position error (Gauss-Markov)
+    vertical_sigma_m: float = 3.0
+    correlation_time_s: float = 60.0
+    white_noise_m: float = 0.3
+    velocity_sigma_mps: float = 0.1
+    max_accel_g: float = 4.0  # receiver loses lock above this acceleration
+    reacquire_s: float = 1.0  # time below the limit before fixes are valid again
+
+
+@dataclass
+class SensorsConfig:
+    seed: int = 0  # all random sensor errors (turn-on biases, noise) derive from this
+    imu: list[ImuConfig] = field(default_factory=list)
+    baro: BaroConfig | None = None
+    gnss: GnssConfig | None = None
+
+
+@dataclass
 class SimulationConfig:
     dt: float = 0.002
     t_max: float = 300.0
@@ -152,6 +249,8 @@ class Config:
     launch: LaunchConfig
     environment: EnvironmentConfig
     aero: AeroConfig = field(default_factory=AeroConfig)
+    actuators: ActuatorsConfig = field(default_factory=ActuatorsConfig)
+    sensors: SensorsConfig = field(default_factory=SensorsConfig)
     disturbances: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     montecarlo: MonteCarloConfig | None = None
@@ -280,6 +379,24 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("aero.canard_vortex.model must be 'none' or 'vortex'")
     if cv.strength_factor < 0 or cv.core_radius <= 0:
         raise ConfigError("aero.canard_vortex: strength_factor must be >= 0 and core_radius > 0")
+    act = cfg.actuators.canards
+    if act.model not in ("ideal", "servo"):
+        raise ConfigError("actuators.canards.model must be 'ideal' or 'servo'")
+    if min(act.natural_frequency_hz, act.damping_ratio, act.stiffness, act.stall_torque, act.max_rate_dps,
+           act.limit_deg) <= 0 or min(act.deadband_deg, act.resolution_deg, act.backlash_deg) < 0:
+        raise ConfigError("actuators.canards: dynamics parameters must be > 0, deadband/resolution/backlash >= 0")
+    sensors = [*cfg.sensors.imu, *(x for x in (cfg.sensors.baro, cfg.sensors.gnss) if x is not None)]
+    names = [i.name for i in cfg.sensors.imu]
+    if len(set(names)) != len(names) or {"baro", "gnss"} & set(names):
+        raise ConfigError("sensors.imu: names must be unique (and not 'baro' or 'gnss')")
+    for sc in sensors:
+        if not (0 < sc.rate_hz <= 1.0 / cfg.simulation.dt + 1e-9):
+            raise ConfigError(f"sensor rate {sc.rate_hz} Hz must be in (0, 1/simulation.dt]")
+        if sc.latency_s < 0:
+            raise ConfigError("sensor latency must be >= 0")
+    for imu in cfg.sensors.imu:
+        if len(imu.offset_yz_m) != 2 or len(imu.orientation_deg) != 3:
+            raise ConfigError(f"sensors.imu '{imu.name}': offset_yz_m needs 2 values, orientation_deg 3")
     if not (0 < cfg.simulation.dt <= 0.01):
         raise ConfigError("simulation.dt must be in (0, 0.01] s")
     if cfg.simulation.log_dt < cfg.simulation.dt:

@@ -103,7 +103,7 @@ def simulate(raw_json: str, schedule: str) -> dict:
             "cg": {"CG liftoff": m0.cg_station, "CG burnout": m1.cg_station},
             "cp03": rk.aero.static_cp(0.3)[1], "ref_length": rk.aero.ref_length,
             "fincan_free": rk.fincan_free, "n_canards": rk.aero.n_canards,
-            "vortex_map": viz.vortex_coupling_curves(rk)}
+            "vortex_map": viz.vortex_coupling_curves(rk), "sensors": res.sensors}
 
 
 @st.cache_data(show_spinner=False)
@@ -240,6 +240,32 @@ with st.sidebar.form("scenario"):
                 else:
                     raw["disturbances"]["fin_misalignment_deg"].pop(fp, None)
                 ui_overrides.append(f"fin misalignment {fp}: {cur} → {vals}")
+    with st.expander("Sensors & canard servos"):
+        sc_ = c.sensors
+        for k, imu in enumerate(sc_.imu):
+            knob(f"IMU '{imu.name}'", f"sensors.imu.{k}.enabled", imu.enabled, st.checkbox)
+        if sc_.baro is not None:
+            knob("Barometer", "sensors.baro.enabled", sc_.baro.enabled, st.checkbox)
+        if sc_.gnss is not None:
+            knob("GNSS", "sensors.gnss.enabled", sc_.gnss.enabled, st.checkbox)
+        if sc_.imu or sc_.baro or sc_.gnss:
+            knob("Sensor error seed", "sensors.seed", sc_.seed, st.number_input, step=1)
+        a_ = c.actuators.canards
+        knob("Servo model", "actuators.canards.model", a_.model,
+             lambda label, value, **k: st.selectbox(label, ["ideal", "servo"],
+                                                    index=["ideal", "servo"].index(value), **k))
+        knob("Servo natural frequency [Hz]", "actuators.canards.natural_frequency_hz", a_.natural_frequency_hz,
+             st.number_input, min_value=0.5, step=1.0)
+        knob("Servo damping ratio", "actuators.canards.damping_ratio", a_.damping_ratio, st.number_input,
+             min_value=0.05, step=0.05)
+        knob("Servo stiffness [N m/rad]", "actuators.canards.stiffness", a_.stiffness, st.number_input,
+             min_value=0.1, step=5.0)
+        knob("Servo deadband [°]", "actuators.canards.deadband_deg", a_.deadband_deg, st.number_input,
+             min_value=0.0, step=0.05, format="%.3f")
+        knob("Command resolution [°]", "actuators.canards.resolution_deg", a_.resolution_deg, st.number_input,
+             min_value=0.0, step=0.01, format="%.3f")
+        knob("Backlash [°]", "actuators.canards.backlash_deg", a_.backlash_deg, st.number_input,
+             min_value=0.0, step=0.05, format="%.3f")
     with st.expander("Canards (open loop)"):
         schedule = st.text_input("Roll deflection schedule  t:deg, …", value="", key=f"{cfg_name}:schedule",
                                  help="e.g. 0:0, 3:0, 3.01:0.5, 6:0.5, 6.01:0 — linear interpolation. Empty = canards at 0.")
@@ -407,6 +433,40 @@ GROUPS = {
     ],
 }
 
+
+
+def _hold(ts, vs):
+    """Sensor stream resampled onto the log times (sample and hold)."""
+    i = np.clip(np.searchsorted(ts, t, side="right") - 1, 0, len(ts) - 1)
+    out = np.asarray(vs, dtype=float)[i]
+    return np.where(t < ts[0], np.nan, out)
+
+
+S = R.get("sensors") or {}
+if S or any(f"canard_cmd_{k}" in d for k in range(R["n_canards"])):
+    sens = [("Canard 0: command vs actual [°]", [("command", d["canard_cmd_0"] * DEG), ("actual", d["canard_0"] * DEG)]),
+            ("Canard hinge moments [N m]", [(f"canard {k}", d[f"hinge_moment_{k}"]) for k in range(R["n_canards"])])]
+    imus = [k for k, v in S.items() if "gx" in v]
+    if imus:
+        g0 = S[imus[0]]
+        sens += [("Roll rate: gyros vs truth [°/s]", [("truth", _hold(g0["t"], g0["true_gx"]) * DEG)]
+                  + [(k, _hold(S[k]["t"], S[k]["gx"]) * DEG) for k in imus]),
+                 ("Pitch rate: gyros vs truth [°/s]", [("truth", _hold(g0["t"], g0["true_gy"]) * DEG)]
+                  + [(k, _hold(S[k]["t"], S[k]["gy"]) * DEG) for k in imus]),
+                 ("Axial specific force: accels vs truth [m/s²]", [("truth", _hold(g0["t"], g0["true_ax"]))]
+                  + [(k, _hold(S[k]["t"], S[k]["ax"])) for k in imus])]
+    if "baro" in S:
+        b = S["baro"]
+        from rocket_dt.sensors import pressure_altitude
+        sens.append(("Baro altitude (zeroed on the pad) vs truth [m]",
+                     [("truth", _hold(b["t"], b["true_altitude"] - b["true_altitude"][0])),
+                      ("baro", _hold(b["t"], pressure_altitude(b["pressure"], b["pressure"][0])))]))
+    if "gnss" in S:
+        n = S["gnss"]
+        sens += [("GNSS altitude vs truth [m]", [("truth", _hold(n["t"], n["true_u"])), ("GNSS", _hold(n["t"], n["u"]))]),
+                 ("GNSS fix valid", [("valid", _hold(n["t"], n["valid"]))])]
+    GROUPS["Sensors & servos"] = sens
+
 with tabs[1]:
     c1, c2, c3 = st.columns([2, 3, 1])
     groups = c1.multiselect("Groups", list(GROUPS), default=["Trajectory", "Aerodynamics", "Roll & fin can"])
@@ -420,6 +480,12 @@ with tabs[1]:
     i_c = int(min(np.searchsorted(t, cursor), len(t) - 1))
     with st.expander(f"Full state at t = {t[i_c]:.3f} s"):
         st.dataframe(pd.DataFrame({"value": {k: v[i_c] for k, v in d.items()}}), width="stretch")
+    if S:
+        section("Full-rate sensor logs (measurements and true values)")
+        cols = st.columns(len(S))
+        for col, (name, log) in zip(cols, S.items()):
+            col.download_button(f"{name}.csv", pd.DataFrame(log).to_csv(index=False).encode(),
+                                f"sensor_{name}.csv", "text/csv", key=f"dl_sensor_{name}")
 
 # ----------------------------------------------------------------------------- explorer
 

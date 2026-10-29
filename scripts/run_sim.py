@@ -30,13 +30,15 @@ def main():
     if a.canard_schedule:
         pts = [tuple(float(v) for v in p.split(":")) for p in a.canard_schedule.split(",")]
         sim.controller = RollDeflectionSchedule(sim.rocket.aero.n_canards, pts)
-    print("\n".join(sim.rocket.notes), "\n")
+    print("\n".join(sim.notes), "\n")
     result = sim.run()
     print(result.summary())
 
     out = Path(a.out) if a.out else Path("output") / Path(a.config).stem
     out.mkdir(parents=True, exist_ok=True)
     result.save_csv(out / "flight.csv")
+    for f in result.save_sensor_csvs(out):
+        print("wrote", f)
     for f in plot_flight(result, out):
         print("wrote", f)
 

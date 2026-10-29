@@ -11,7 +11,7 @@ import numpy as np
 
 from rocket_dt.aero import AeroModel
 from rocket_dt.config import Config, ConfigError
-from rocket_dt.control import Controller, IdealActuator
+from rocket_dt.control import Controller
 from rocket_dt.io.motor import cross_check, load_eng, load_openmotor_csv, load_ric
 from rocket_dt.io.ork import Component, MassComponent, OrkRocket, load_ork, resolve_positions, rocket_length
 from rocket_dt.mass import MassModel, combine, component_mass
@@ -103,7 +103,7 @@ def build_rocket(cfg: Config) -> RocketModel:
 
     aero = AeroModel(ork, {r.path for r in fincan_roots}, cfg.rocket.canards,
                      cfg.disturbances.fin_misalignment_deg, cfg.disturbances.drag_scale,
-                     cfg.aero.canard_vortex)
+                     cfg.aero.canard_vortex, cfg.actuators.canards.hinge_from_root_le)
     cna, cp = aero.static_cp(0.3)
     notes.append(f"AERO ref diameter {aero.ref_length:.4f} m, length {aero.length:.4f} m; at M 0.3: "
                  f"CN_alpha {cna:.2f}/rad, CP station {cp:.4f} m, static margin "
@@ -125,6 +125,5 @@ def build_rocket(cfg: Config) -> RocketModel:
                        length=rocket_length(ork), notes=notes)
 
 
-def build_simulation(cfg: Config, controller: Controller | None = None,
-                     actuator: IdealActuator | None = None) -> Simulation:
+def build_simulation(cfg: Config, controller: Controller | None = None, actuator=None) -> Simulation:
     return Simulation(build_rocket(cfg), cfg, controller, actuator)

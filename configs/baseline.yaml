@@ -49,6 +49,56 @@ aero:
     core_radius: 0.006                  # m, ~0.1 x canard span
     roll_lag: true
 
+# Canard servos (one per canard) - all values are PLACEHOLDERS until bench tests of the real servo.
+actuators:
+  canards:
+    model: servo                        # ideal | servo
+    limit_deg: 15.0
+    natural_frequency_hz: 15.0          # from a small-step response test
+    damping_ratio: 0.7
+    stiffness: 40.0                     # N m/rad, hang a known torque on the canard, measure the deflection
+    stall_torque: 1.5                   # N m (datasheet)
+    max_rate_dps: 500.0                 # datasheet no-load speed (0.12 s / 60 deg)
+    deadband_deg: 0.1                   # datasheet deadband (us) x deg/us
+    resolution_deg: 0.09                # PWM timer resolution (1 us at ~0.09 deg/us)
+    backlash_deg: 0.2                   # free play servo horn -> canard
+    hinge_from_root_le: null            # null = canard planform centroid (54 mm aft of the root LE)
+
+# Flight-computer sensors - datasheet-class PLACEHOLDER values. Disable any with enabled: false.
+sensors:
+  seed: 0
+  imu:
+    - name: imu0                        # ICM-42688-class
+      station: 1.015                    # avionics bay plate
+      rate_hz: 500
+      accel: {range_g: 16, bits: 16, noise_density_ug_rthz: 70, bias_sigma_mg: 20, scale_factor_sigma_pct: 0.5,
+              misalignment_sigma_deg: 0.5}
+      gyro: {range_dps: 2000, bits: 16, noise_density_mdps_rthz: 2.8, bias_sigma_dps: 0.5, scale_factor_sigma_pct: 0.5,
+             misalignment_sigma_deg: 0.5, g_sensitivity_dps_per_g: 0.1}
+    - name: imu1                        # BMI088-class
+      station: 1.015
+      offset_yz_m: [0.02, 0.0]
+      rate_hz: 500
+      accel: {range_g: 24, bits: 16, noise_density_ug_rthz: 175, bias_sigma_mg: 20, scale_factor_sigma_pct: 0.5,
+              misalignment_sigma_deg: 0.5}
+      gyro: {range_dps: 2000, bits: 16, noise_density_mdps_rthz: 14, bias_sigma_dps: 1.0, scale_factor_sigma_pct: 0.5,
+             misalignment_sigma_deg: 0.5, g_sensitivity_dps_per_g: 0.1}
+  baro:                                 # MS5611-class
+    station: 1.02
+    rate_hz: 50
+    noise_pa: 2.0
+    bias_sigma_pa: 100.0
+    resolution_pa: 1.2
+    lag_s: 0.02
+    static_error_coeff: 0.0             # depends on the vent holes - fit from flight data
+  gnss:                                 # u-blox M10-class; not certain to fly
+    enabled: false
+    station: 1.00
+    rate_hz: 10
+    latency_s: 0.1
+    max_accel_g: 4.0
+    reacquire_s: 1.0
+
 disturbances:
   thrust_misalignment_deg: [0.0, 0.0]
   thrust_offset_m: [0.0, 0.0]

@@ -1,11 +1,31 @@
 """Canard control interfaces.
 
-The simulation calls ``controller.update`` at ``controller.rate_hz`` and holds the
-command between calls (zero-order hold), exactly like flight software running in a
-fixed-rate loop. The actuator model turns commands into actual deflections.
+The simulation calls ``controller.update(inp)`` at ``controller.rate_hz`` and holds the
+returned command (one deflection per canard, rad) until the next call (zero-order
+hold), exactly like flight software running in a fixed-rate loop. The actuator model
+(actuators.py) turns commands into actual canard deflections.
 
-Today the controller receives the true state; a sensor layer will later sit between
-truth and controller without changing this interface.
+``inp.sensors`` holds every sensor sample that has become available since the previous
+call (after each sensor's latency), oldest first. Flight software must only use these.
+``inp.truth`` is the true state, provided for debugging and for developing a controller
+with perfect state knowledge before adding an estimator; do not use it in a controller
+meant to fly.
+
+Writing a controller::
+
+    class MyController(Controller):
+        rate_hz = 100.0
+
+        def __init__(self, n_canards):
+            self.n = n_canards
+
+        def reset(self):
+            self.roll_rate = 0.0
+
+        def update(self, inp):
+            for s in inp.sensors.imu.get("imu0", []):
+                self.roll_rate = s.gyro[0]
+            return np.full(self.n, -0.001 * self.roll_rate)
 """
 
 from __future__ import annotations
@@ -13,6 +33,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from rocket_dt.actuators import IdealActuator  # noqa: F401  (re-exported for existing imports)
+from rocket_dt.sensors import SensorReadings
 
 
 @dataclass
@@ -28,13 +51,20 @@ class TruthSnapshot:
     dynamic_pressure: float
 
 
+@dataclass
+class ControllerInput:
+    t: float
+    sensors: SensorReadings  # new samples since the previous update
+    truth: TruthSnapshot  # debugging / ideal-sensor studies only
+
+
 class Controller:
     rate_hz: float = 100.0
 
     def reset(self) -> None:
         pass
 
-    def update(self, snap: TruthSnapshot) -> np.ndarray:
+    def update(self, inp: ControllerInput) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -44,7 +74,7 @@ class NoControl(Controller):
     def __init__(self, n_canards: int):
         self.n = n_canards
 
-    def update(self, snap: TruthSnapshot) -> np.ndarray:
+    def update(self, inp: ControllerInput) -> np.ndarray:
         return np.zeros(self.n)
 
 
@@ -60,20 +90,5 @@ class RollDeflectionSchedule(Controller):
         self.d = np.radians([p[1] for p in schedule])
         self.rate_hz = rate_hz
 
-    def update(self, snap: TruthSnapshot) -> np.ndarray:
-        return np.full(self.n, float(np.interp(snap.t, self.t, self.d)))
-
-
-class IdealActuator:
-    """Deflection follows the command instantly, clipped to +-limit."""
-
-    def __init__(self, n: int, limit_deg: float = 15.0):
-        self.limit = np.radians(limit_deg)
-        self.deflection = np.zeros(n)
-
-    def reset(self) -> None:
-        self.deflection[:] = 0.0
-
-    def step(self, command: np.ndarray, dt: float) -> np.ndarray:
-        self.deflection = np.clip(command, -self.limit, self.limit)
-        return self.deflection
+    def update(self, inp: ControllerInput) -> np.ndarray:
+        return np.full(self.n, float(np.interp(inp.t, self.t, self.d)))

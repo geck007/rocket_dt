@@ -20,6 +20,11 @@ internal and cancels). With the fin can locked, Omega = 0 and the second row dro
 
 Integration: fixed-step RK4. Inputs that come from discrete-time processes
 (canard deflections, turbulence) are held constant within a step.
+
+Each step: sensors sample the state (sensors.py), the controller runs at its own
+rate on the samples that have become available (control.py), and the actuator
+model advances the canards over the step under the latest hinge moments
+(actuators.py).
 """
 
 from __future__ import annotations
@@ -33,10 +38,12 @@ import numpy as np
 from rocket_dt import quaternion as Q
 from rocket_dt.aero import AeroModel
 from rocket_dt.atmosphere import ISAAtmosphere, gravity
+from rocket_dt.actuators import make_actuator
 from rocket_dt.config import BearingConfig, Config
-from rocket_dt.control import Controller, IdealActuator, NoControl, TruthSnapshot
+from rocket_dt.control import Controller, ControllerInput, NoControl, TruthSnapshot
 from rocket_dt.mass import MassModel
 from rocket_dt.motor import SolidMotor
+from rocket_dt.sensors import SensorSuite, SensorTruth
 from rocket_dt.wind import Wind
 
 E_X = np.array([1.0, 0.0, 0.0])
@@ -74,6 +81,7 @@ class FlightResult:
     rocket_name: str
     wall_time: float
     notes: list[str]
+    sensors: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)  # full-rate sensor logs
 
     def __getitem__(self, k: str) -> np.ndarray:
         return self.data[k]
@@ -106,10 +114,20 @@ class FlightResult:
         ev = "; ".join(f"{k}={v:.4f}" for k, v in self.events.items())
         np.savetxt(path, arr, delimiter=",", header=f"events: {ev}\n{hdr}", comments="# ")
 
+    def save_sensor_csvs(self, out_dir) -> list:
+        """One CSV per sensor (measurements and the matching true values)."""
+        from pathlib import Path
+        paths = []
+        for name, cols in self.sensors.items():
+            p = Path(out_dir) / f"sensor_{name}.csv"
+            np.savetxt(p, np.column_stack(list(cols.values())), delimiter=",", header=",".join(cols), comments="")
+            paths.append(p)
+        return paths
+
 
 class Simulation:
     def __init__(self, rocket: RocketModel, cfg: Config, controller: Controller | None = None,
-                 actuator: IdealActuator | None = None):
+                 actuator=None):
         self.rocket = rocket
         self.cfg = cfg
         self.atm = ISAAtmosphere(cfg.environment.atmosphere.temperature_offset_K,
@@ -119,7 +137,11 @@ class Simulation:
         self.g = gravity(cfg.launch.latitude_deg, cfg.launch.altitude_msl)
         n_c = rocket.aero.n_canards
         self.controller = controller or NoControl(n_c)
-        self.actuator = actuator or IdealActuator(n_c)
+        self.actuator = actuator or make_actuator(cfg.actuators.canards, n_c)
+        self.sensors = SensorSuite(cfg.sensors, cfg.simulation.dt)
+        self._hinge = np.zeros(n_c)
+        desc = getattr(self.actuator, "describe", None)
+        self.notes = rocket.notes + ([desc()] if desc else []) + self.sensors.describe()
         th = math.radians(cfg.launch.angle_from_vertical_deg)
         az = math.radians(cfg.launch.azimuth_deg)
         self.rail_dir = np.array([math.sin(th) * math.sin(az), math.sin(th) * math.cos(az), math.cos(th)])
@@ -141,6 +163,7 @@ class Simulation:
         cg_st = ms.cg_station
         aero = rk.aero.evaluate(v_b, omega, y[14], y[13], delta, air.density, air.speed_of_sound,
                                 air.kinematic_viscosity, cg_st, diagnostics)
+        self._hinge = aero.hinge_moment
         thrust = rk.motor.thrust(t)
         f_thrust = thrust * rk.thrust_direction
         r_noz = np.array([cg_st - rk.motor.nozzle_station, 0.0, 0.0]) + rk.thrust_offset - np.array([0.0, *ms.cg[1:]])
@@ -198,6 +221,7 @@ class Simulation:
         v_b = R.T @ (y[3:6] - self.wind.at(y[2]))
         aero = rk.aero.evaluate(v_b, np.zeros(3), 0.0, 0.0, delta, air.density, air.speed_of_sound,
                                 air.kinematic_viscosity, ms.cg_station)
+        self._hinge = aero.hinge_moment
         f_along = rk.motor.thrust(t) + aero.force[0] - ms.mass * self.g * self.rail_dir[2]
         s = float(np.dot(y[0:3] - self._r0, self.rail_dir))
         a = f_along / ms.mass
@@ -237,6 +261,8 @@ class Simulation:
         ctrl_every = max(1, int(round(1.0 / (self.controller.rate_hz * dt))))
         self.controller.reset()
         self.actuator.reset()
+        self.sensors.reset()
+        self._hinge = np.zeros(self.rocket.aero.n_canards)
         y = self.initial_state()
         t = 0.0
         phase = "rail"
@@ -244,14 +270,19 @@ class Simulation:
         log: dict[str, list] = {}
         delta = self.actuator.deflection.copy()
         command = delta.copy()
+        self._command = command
         step = 0
         max_steps = int(cfg.t_max / dt) + 1
 
         while step < max_steps:
             # discrete-time updates (zero-order hold over the step)
+            if self.sensors.active:
+                self.sensors.step(step, self._sensor_truth(t, y, delta, phase, self.sensors.needs_accel(step)))
             if step % ctrl_every == 0:
-                command = self.controller.update(self._snapshot(t, y))
-            delta = self.actuator.step(command, dt)
+                command = np.asarray(self.controller.update(
+                    ControllerInput(t, self.sensors.read(t), self._snapshot(t, y))), dtype=float)
+                self._command = command
+            delta = self.actuator.step(command, dt, self._hinge)
             airspeed = float(np.linalg.norm(y[3:6] - self.wind.at(y[2])))
             self.wind.update_turbulence(dt, max(y[2], 0.0), airspeed)
 
@@ -292,9 +323,22 @@ class Simulation:
                 raise FloatingPointError(f"State became non-finite at t = {t:.3f} s")
 
         data = {k: np.asarray(v) for k, v in log.items()}
-        return FlightResult(data, events, self.rocket.name, _time.perf_counter() - wall0, self.rocket.notes)
+        return FlightResult(data, events, self.rocket.name, _time.perf_counter() - wall0, self.notes,
+                            self.sensors.logs())
 
     # ------------------------------------------------------------------ helpers
+
+    def _sensor_truth(self, t, y, delta, phase, need_accel: bool) -> SensorTruth:
+        R = Q.to_matrix(y[6:10])
+        air = self._air(y[2])
+        va = float(np.linalg.norm(y[3:6] - self.wind.at(y[2])))
+        truth = SensorTruth(t=t, position=y[0:3].copy(), velocity=y[3:6].copy(), R=R, omega=y[10:13].copy(),
+                            cg_station=self.rocket.mass.at(t).cg_station, g=self.g,
+                            dynamic_pressure=0.5 * air.density * va * va, air_at=self._air)
+        if need_accel:
+            dy = (self.deriv_rail if phase == "rail" else self.deriv_flight)(t, y, delta)
+            truth.accel, truth.omega_dot = dy[3:6], dy[10:13]
+        return truth
 
     def _snapshot(self, t, y) -> TruthSnapshot:
         air = self._air(y[2])
@@ -353,8 +397,11 @@ class Simulation:
             "air_density": air.density, "air_temperature": air.temperature,
         }
         each = d.get("vortex_roll_moment_each", np.zeros(len(delta)))
+        hinge = aero.hinge_moment if aero.hinge_moment is not None else np.zeros(len(delta))
         for i, dlt in enumerate(delta):
             row[f"canard_{i}"] = dlt
+            row[f"canard_cmd_{i}"] = self._command[i]
+            row[f"hinge_moment_{i}"] = hinge[i]
             row[f"vortex_roll_{i}"] = each[i]
         for k, v in row.items():
             log.setdefault(k, []).append(float(v))
