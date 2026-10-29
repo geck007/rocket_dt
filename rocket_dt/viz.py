@@ -137,15 +137,16 @@ def _rocket_traces(geom, d, i, scale, center, body_mesh, full=True):
 
 def _anim_controls(frame_names, duration=60):
     return dict(
-        updatemenus=[dict(type="buttons", showactive=False, x=0.0, y=0.0, xanchor="left", yanchor="top",
-                          pad=dict(t=10, r=10), direction="left",
+        # buttons sit just above the slider (bottom-left of the plot area), so they never overlap it
+        updatemenus=[dict(type="buttons", showactive=False, x=0.0, y=0.0, xanchor="left", yanchor="bottom",
+                          pad=dict(b=6, l=6), direction="left",
                           buttons=[dict(label="▶ Play", method="animate",
                                         args=[None, dict(frame=dict(duration=duration, redraw=True),
                                                          transition=dict(duration=0), fromcurrent=True)]),
                                    dict(label="⏸ Pause", method="animate",
                                         args=[[None], dict(frame=dict(duration=0, redraw=False),
                                                            mode="immediate")])])],
-        sliders=[dict(active=0, x=0.12, y=0.0, len=0.86, pad=dict(t=10), currentvalue=dict(prefix="t = ", suffix=" s"),
+        sliders=[dict(active=0, x=0.0, y=0.0, len=1.0, pad=dict(t=10, l=6, r=6), currentvalue=dict(prefix="t = ", suffix=" s"),
                       steps=[dict(method="animate", label=n,
                                   args=[[n], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                   transition=dict(duration=0))]) for n in frame_names])])
@@ -200,7 +201,7 @@ def fig_launch(d, geom, events, n_frames=120, t_end=None, rocket_scale=None, hei
     fig.frames = frames
     aspect_z = min(zmax / (2 * W), 1.8)
     fig.update_layout(
-        height=height, margin=dict(l=0, r=0, t=40, b=0), title=dict(text=_status(d, idx[0]), font=dict(size=13)),
+        height=height, margin=dict(l=0, r=0, t=40, b=24), title=dict(text=_status(d, idx[0]), font=dict(size=13)),
         scene=dict(xaxis=dict(title="East [m]", range=[-W, W]), yaxis=dict(title="North [m]", range=[-W, W]),
                    zaxis=dict(title="Altitude [m]", range=[0, zmax * 1.08]),
                    aspectmode="manual", aspectratio=dict(x=1, y=1, z=aspect_z),
@@ -238,7 +239,7 @@ def fig_attitude(d, geom, n_frames=120, t_end=None, height=620) -> go.Figure:
     fig.frames = frames
     r = 0.75 * L
     fig.update_layout(
-        height=height, margin=dict(l=0, r=0, t=40, b=0), title=dict(text=_status(d, i0), font=dict(size=13)),
+        height=height, margin=dict(l=0, r=0, t=40, b=24), title=dict(text=_status(d, i0), font=dict(size=13)),
         scene=dict(xaxis=dict(title="E", range=[-r, r]), yaxis=dict(title="N", range=[-r, r]),
                    zaxis=dict(title="Up", range=[-r, r]), aspectmode="cube",
                    camera=dict(eye=dict(x=1.3, y=-1.3, z=0.5))),
