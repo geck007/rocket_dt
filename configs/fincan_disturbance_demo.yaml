@@ -1,0 +1,12 @@
+# Baseline plus small, realistic build errors, to exercise the free fin can.
+# Only the differences from baseline.yaml are listed.
+extends: baseline.yaml
+
+disturbances:
+  fin_misalignment_deg:
+    "motor case transition/Trapezoidal Fin Set": [0.3, 0.3, 0.3, 0.3]   # all fins twisted the same way
+    "canards bay body/Trapezoidal Fin Set": [0.1, 0.1, 0.1, 0.1]        # canard zero-offset
+  thrust_misalignment_deg: [0.1, 0.0]
+
+simulation:
+  stop_at: apogee

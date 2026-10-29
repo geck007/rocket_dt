@@ -1,0 +1,9 @@
+# environment / build
+venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# generated results (re-create with scripts/)
+output/

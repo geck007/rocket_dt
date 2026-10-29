@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocket_dt"
+version = "0.1.0"
+description = "6-DOF digital twin of a solid-propellant rocket with free-spinning fin can and roll canards"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "pyyaml>=6", "matplotlib>=3.8"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+dashboard = ["streamlit>=1.40", "plotly>=5.20", "pandas>=2.0"]
+
+[tool.setuptools.packages.find]
+include = ["rocket_dt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: full flight simulation (deselect with -m 'not slow')"]

@@ -1,0 +1,76 @@
+# Baseline digital-twin configuration.
+#
+# Single source of truth:
+#   airframe        -> the .ork file (+ the explicit overrides below, each logged at build time)
+#   motor           -> openMotor CSV (thrust, grain mass), .ric (grain geometry), .eng (loaded mass, case size)
+#   everything else -> this file. Settings stored inside the .ork's simulations are NOT used.
+# Unknown keys are rejected.
+
+rocket:
+  ork: ../data/rocket.ork.zip
+  canards: "canards bay body/Trapezoidal Fin Set"
+  fin_can:
+    enabled: true                       # false = fin can locked to the body
+    components: ["motor case transition"]   # this tube and everything attached to it spins
+    roll_inertia: 0.026                 # kg m^2, upper-bound estimate (CAD fins + can + 0.6 kg hardware at r = 65 mm)
+    bearing:                            # 61820 deep-groove bearing - PLACEHOLDER values until a spin-down test
+      coulomb_torque: 0.02              # N m
+      viscous_coeff: 1.0e-4             # N m s/rad
+  overrides:
+    - component: "motor case transition/Trapezoidal Fin Set"
+      set: {mass: 0.971425}
+      note: "CAD (Fusion 360, Vihaan, 2026-10-29): 4 fins, PA12-CF"
+
+motor:
+  burn_data: "../data/csv files as asked.csv"
+  grains: "../data/pls work.ric"
+  eng: "../data/pls work eng file.eng"
+  grain_stack_offset: 0.0               # grain stack centred in the case (assumption)
+  grain_spacing: 0.0
+
+launch:
+  rail_length: 1.0
+  angle_from_vertical_deg: 0.0
+  azimuth_deg: 90.0
+  altitude_msl: 0.0
+  latitude_deg: 28.61
+
+environment:
+  wind:
+    speed: 2.0
+    direction_from_deg: 90.0            # wind FROM the east
+    profile: constant
+    turbulence: {model: none}
+
+aero:
+  canard_vortex:                        # canard tip vortices acting on the fin can (aero.py)
+    model: vortex                       # none | vortex
+    strength_factor: 1.0                # PLACEHOLDER calibration until CFD / flight data
+    core_radius: 0.006                  # m, ~0.1 x canard span
+    roll_lag: true
+
+disturbances:
+  thrust_misalignment_deg: [0.0, 0.0]
+  thrust_offset_m: [0.0, 0.0]
+  fin_misalignment_deg: {}
+
+simulation:
+  dt: 0.002
+  t_max: 300.0
+  stop_at: ground
+  log_dt: 0.01
+
+montecarlo:
+  n_runs: 50
+  seed: 1
+  dispersions:
+    environment.wind.speed: {dist: uniform, low: 0.0, high: 6.0}
+    environment.wind.direction_from_deg: {dist: uniform, low: 0.0, high: 360.0}
+    launch.angle_from_vertical_deg: {dist: normal, mean: 0.0, sigma: 1.0}
+    disturbances.thrust_misalignment_deg.0: {dist: normal, mean: 0.0, sigma: 0.15}
+    disturbances.thrust_misalignment_deg.1: {dist: normal, mean: 0.0, sigma: 0.15}
+    disturbances.thrust_scale: {dist: normal, mean: 1.0, sigma: 0.03}
+    disturbances.drag_scale: {dist: normal, mean: 1.0, sigma: 0.05}
+    aero.canard_vortex.strength_factor: {dist: uniform, low: 0.5, high: 1.5}
+    disturbances.fin_misalignment_deg.motor case transition/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.2, size: 4}
+    disturbances.fin_misalignment_deg.canards bay body/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.1, size: 4}

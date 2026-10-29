@@ -1,0 +1,58 @@
+# Validation against data/all.csv (OpenRocket "Simulation 2").
+#
+# all.csv was produced from an older revision of the design (the one exported to
+# "yay it works.rkt"), not from the current rocket.ork. The overrides below turn
+# the current .ork into that revision; all values come from the .rkt export.
+# The fin can is locked because OpenRocket cannot model it.
+
+rocket:
+  ork: ../data/rocket.ork.zip
+  canards: "canards bay body/Trapezoidal Fin Set"
+  fin_can:
+    enabled: false
+    components: ["motor case transition"]
+    bearing: {coulomb_torque: 0.0, viscous_coeff: 0.0}
+  overrides:
+    - component: "bulkhead space"
+      set: {length: 0.128}
+      note: ".rkt revision"
+    - component: "centering ring"
+      set: {length: 0.012}
+      note: ".rkt revision"
+    - component: "motor case transition"
+      set: {mass: 0.2256460076094792}
+      note: ".rkt revision (CalcMass)"
+    - component: "canards bay body/avionics to canards bulkhead"
+      set: {mass: 0.150}
+      note: ".rkt revision"
+    - component: "avionics bay tube/avionics bay plate"
+      set: {mass: 0.0}
+      note: ".rkt revision has no avionics bay plate"
+    - component: "motor case transition/Trapezoidal Fin Set"
+      set: {cross_section: airfoil}
+      note: ".rkt revision (856.8 g = 0.85 airfoil volume factor)"
+
+motor:
+  burn_data: "../data/csv files as asked.csv"
+  grains: "../data/pls work.ric"
+  eng: "../data/pls work eng file.eng"
+
+launch:
+  rail_length: 1.0
+  angle_from_vertical_deg: 0.0
+  azimuth_deg: 90.0
+  altitude_msl: 0.0
+  latitude_deg: 28.61
+
+environment:
+  wind:
+    speed: 2.0
+    direction_from_deg: 90.0
+    profile: constant
+    turbulence: {model: none}         # OpenRocket used 10 % turbulence; disabled for a deterministic comparison
+
+simulation:
+  dt: 0.002
+  t_max: 300.0
+  stop_at: ground
+  log_dt: 0.01
