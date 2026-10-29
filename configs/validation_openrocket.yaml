@@ -28,9 +28,6 @@ rocket:
     - component: "avionics bay tube/avionics bay plate"
       set: {mass: 0.0}
       note: ".rkt revision has no avionics bay plate"
-    - component: "motor case transition/Trapezoidal Fin Set"
-      set: {cross_section: airfoil}
-      note: ".rkt revision (856.8 g = 0.85 airfoil volume factor)"
 
 motor:
   burn_data: "../data/csv files as asked.csv"

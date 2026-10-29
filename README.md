@@ -105,7 +105,7 @@ use `extends: baseline.yaml` and list only what differs (no copy-pasted paramete
 ## Validation (configs/validation_openrocket.yaml vs data/all.csv)
 
 `all.csv` came from an older revision of the design (`yay it works.rkt`). The validation config
-rebuilds that revision from the current .ork with six logged overrides. The fin can is locked
+rebuilds that revision from the current .ork with five logged overrides. The fin can is locked
 because OpenRocket can't model it.
 
 | | rocket_dt | OpenRocket |
@@ -135,9 +135,9 @@ Component masses match OpenRocket to better than 0.001 %. Known, intended differ
 
 ## Findings so far (current .ork)
 
-* **Apogee ≈ 1515 m, not 2 km.** The .ork's tail fins are `square` cross-section (10 mm blunt
-  leading and trailing edges), which adds ≈ 0.33 to CD (0.76 vs 0.43). The rest is about 1.1 kg of extra mass.
-  If the real fins are rounded or airfoiled, set that in the .ork.
+* **Apogee ≈ 1794 m** (tail fins `airfoil`, zero-lift CD ≈ 0.41 at Mach 0.3). The gap to the older revision's
+  1926 m is mostly ≈ 1.1 kg of extra mass (liftoff 18.26 kg vs 17.15 kg). With the tail fins modelled as `square`
+  (10 mm blunt edges), as an earlier .ork had them, CD would be ≈ 0.76 and apogee ≈ 1513 m.
 * **Static margin ≈ 1.8–2.2 cal** during ascent. Canard downwash on the tail costs ≈ 0.14 cal
   (tail normal force −5 %). The validation config switches the vortices off, as OpenRocket ignores them.
 * **Roll authority is very high with a free fin can.** The canards are the body's only roll damping,
