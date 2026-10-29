@@ -6,8 +6,9 @@ Single-source-of-truth rules enforced here:
   Deviations are expressed as explicit ``rocket.overrides`` entries, each of which
   is logged with its note when the rocket is built.
 * Motor data comes only from the motor files (see ``rocket_dt.io.motor``).
-* Launch site, environment, disturbances and integrator settings come only from
-  this config. Simulation settings stored inside the .ork are ignored.
+* Launch site, environment, disturbances, sensors, canard servos, the controller and
+  integrator settings come only from this config. Simulation settings stored inside
+  the .ork are ignored.
 * Unknown keys are an error (no silently ignored typos); required keys have no
   defaults.
 """
@@ -227,11 +228,19 @@ class SensorsConfig:
 
 
 @dataclass
+class ControllerConfig:
+    type: str = "none"  # a name registered in rocket_dt.controllers.CONTROLLERS
+    rate_hz: float = 100.0
+    params: dict = field(default_factory=dict)  # fields of the controller's Params dataclass (checked strictly)
+
+
+@dataclass
 class SimulationConfig:
     dt: float = 0.002
     t_max: float = 300.0
     stop_at: str = "ground"  # "apogee" | "ground"
     log_dt: float = 0.01
+    pad_time_s: float = 0.0  # time on the pad before ignition: sensors and controller run (calibration)
 
 
 @dataclass
@@ -251,6 +260,7 @@ class Config:
     aero: AeroConfig = field(default_factory=AeroConfig)
     actuators: ActuatorsConfig = field(default_factory=ActuatorsConfig)
     sensors: SensorsConfig = field(default_factory=SensorsConfig)
+    controller: ControllerConfig = field(default_factory=ControllerConfig)
     disturbances: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     montecarlo: MonteCarloConfig | None = None
@@ -300,6 +310,11 @@ def _convert(tp, value, where: str, base: Path):
             raise ConfigError(f"{where}: expected a mapping, got {value!r}")
         return value
     return value
+
+
+def build_dataclass(cls, data, where: str, base: Path = Path(".")):
+    """Build a (nested) dataclass from a mapping with the same strict checks as the config."""
+    return _build(cls, data, where, base)
 
 
 def _build(cls, data, where: str, base: Path):
@@ -399,6 +414,10 @@ def _validate(cfg: Config) -> None:
             raise ConfigError(f"sensors.imu '{imu.name}': offset_yz_m needs 2 values, orientation_deg 3")
     if not (0 < cfg.simulation.dt <= 0.01):
         raise ConfigError("simulation.dt must be in (0, 0.01] s")
+    if cfg.simulation.pad_time_s < 0:
+        raise ConfigError("simulation.pad_time_s must be >= 0")
+    if not (0 < cfg.controller.rate_hz <= 1.0 / cfg.simulation.dt + 1e-9):
+        raise ConfigError("controller.rate_hz must be in (0, 1/simulation.dt]")
     if cfg.simulation.log_dt < cfg.simulation.dt:
         raise ConfigError("simulation.log_dt must be >= simulation.dt")
     for p in (cfg.rocket.ork, cfg.motor.burn_data, cfg.motor.grains, cfg.motor.eng):
@@ -423,10 +442,3 @@ def set_by_path(raw: dict, dotted: str, value) -> None:
         node[int(last)] = value
     else:
         node[last] = value
-
-
-def get_by_path(raw: dict, dotted: str):
-    node = raw
-    for k in dotted.split("."):
-        node = node[int(k)] if isinstance(node, list) else node[k]
-    return node

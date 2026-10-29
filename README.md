@@ -1,56 +1,261 @@
-# rocket_dt — solid-rocket digital twin
+# rocket_dt — digital twin of the canard-controlled rocket
 
-6-DOF flight simulation of the rocket in `data/rocket.ork.zip`, with a free-spinning
-fin can on a bearing and roll-control canards. The airframe is read from the
-OpenRocket file, the motor from the openMotor/RASP files, and everything else from a
-YAML config.
+A 6-DOF flight simulation of our rocket: an L1926 solid motor, a fin can that spins freely on a
+bearing, and four canards that are each driven by their own servo. It covers the airframe
+aerodynamics and mass properties, the canard servos, the flight computer's sensors, and a controller
+slot where the flight software plugs in.
+
+* The airframe comes from the OpenRocket file `data/rocket.ork.zip`.
+* The motor comes from the openMotor and RASP files in `data/`.
+* Everything else (launch site, wind, sensors, servos, controller, Monte Carlo spreads) comes from a
+  YAML file in `configs/`.
+
+## Getting started
 
 ```bash
-source venv/bin/activate
-pip install -e .[test,dashboard]
+cd junior_larp
+python3 -m venv venv && source venv/bin/activate   # once (Python ≥ 3.11)
+pip install -e .[test,dashboard]                   # once
 
-streamlit run dashboard/app.py                                  # interactive dashboard (http://localhost:8501)
-
-python scripts/run_sim.py configs/baseline.yaml                 # one flight -> output/baseline/ (+ sensor CSVs)
-python scripts/run_sim.py configs/baseline.yaml --locked        # fin can locked to the body
-python scripts/run_sim.py configs/baseline.yaml --apogee --canard-schedule "0:0,3:0,3.01:0.5,6:0.5,6.01:0"
-python scripts/montecarlo.py configs/baseline.yaml --runs 200   # dispersions from the config
-python scripts/validate_openrocket.py                           # comparison with data/all.csv
-pytest                                                          # 60 tests (incl. OpenRocket validation, dashboard)
-pytest -m "not slow"                                            # skip full flights (~15 s)
+streamlit run dashboard/app.py                     # dashboard on http://localhost:8501
 ```
+
+| Command | What it does |
+|---|---|
+| `python scripts/run_sim.py configs/baseline.yaml` | One flight, no controller → `output/baseline/` (flight.csv, sensor CSVs, plots) |
+| `python scripts/run_sim.py configs/vertical_hold.yaml` | The same rocket flown by the example controller (5° rail, 4 m/s wind) |
+| `python scripts/run_sim.py configs/baseline.yaml --apogee --canard-schedule "0:0,3:0,3.01:0.5,6:0.5,6.01:0"` | Open-loop canard roll test (replaces the controller) |
+| `python scripts/montecarlo.py configs/vertical_hold.yaml --runs 200 --apogee` | Monte Carlo with the dispersions in the config |
+| `python scripts/validate_openrocket.py` | Comparison with the OpenRocket export `data/all.csv` |
+| `pytest` | All tests (about 1.5 minutes) |
+| `pytest -m "not slow"` | Everything except the full flights (about 5 s) |
+
+## Layout
+
+```
+configs/                baseline.yaml (the rocket, no control), vertical_hold.yaml (example controller),
+                        fincan_disturbance_demo.yaml (build errors), validation_openrocket.yaml
+data/                   rocket.ork.zip, motor files, OpenRocket exports, CAD
+dashboard/app.py        Streamlit dashboard
+scripts/                command-line tools (run_sim, montecarlo, validate_openrocket)
+rocket_dt/
+  sim.py                6-DOF equations, integration loop, logging
+  aero.py               aerodynamics (lift, drag, canard vortices, hinge moments)
+  mass.py, motor.py     mass properties, burning motor
+  atmosphere.py, wind.py
+  sensors.py            IMU, barometer and GNSS models
+  actuators.py          canard servo model
+  control.py            controller interface (what a controller receives and returns)
+  controllers/          controllers you can pick in a config; vertical_hold.py is the example,
+                        estimation.py a simple strapdown estimator
+  config.py             strict YAML schema
+  builder.py            puts the .ork, motor files and YAML together
+  io/, analysis/, viz.py
+tests/
+```
+
+## The rocket today
+
+| | |
+|---|---|
+| Length / diameter | 1.975 m / 130 mm |
+| Liftoff mass | 18.26 kg (dry airframe 9.86 kg, motor hardware 6.60 kg, propellant 1.80 kg) |
+| Motor | L1926: 4103 Ns, 2.1 s burn |
+| Canards | 4 × airfoil, 64 mm span, CP at station 0.80 m; hinge line at the planform centroid; one servo each |
+| Tail fins | 4 × airfoil, 160 mm span, on the free fin can (1.83 kg, roll inertia 0.026 kg m²) |
+| Static margin | 1.84 cal at liftoff, 1.8–2.2 cal during the ascent |
+| Avionics | 2 IMUs, a barometer; GNSS configured but switched off |
+
+Baseline flight (vertical rail, 2 m/s wind, no controller): apogee **1795 m** at 19.2 s, max speed 209 m/s
+(Mach 0.62), max acceleration 11.7 g, rail exit at 14.2 m/s. Without control the rocket turns into the wind
+and is 30° off vertical by apogee. With the example controller it stays within about 7° on a 5° rail in 4 m/s wind.
 
 ## Dashboard
 
-`dashboard/app.py` (Streamlit); figure builders are in `rocket_dt/viz.py`.
+`streamlit run dashboard/app.py`. The figure builders live in `rocket_dt/viz.py`.
 
-* **Sidebar:** pick a base config and edit launch, wind/turbulence, fin can and bearing, disturbances,
-  per-fin misalignment, sensor on/off switches, canard servo parameters, an open-loop canard schedule
-  and integrator settings, then *Run*.
-  Edited values become overrides of the YAML. They're listed under the run title and in the
-  effective-config download, and they go through the same strict validation as the CLI.
-  Results are cached per scenario, and every run is kept in a run history (*Show run*).
-* **🎬 Launch:**
-  * an animated 3D flight with an enlarged rocket model following the trajectory;
-  * an animated close-up at the CG showing attitude, velocity relative to the air, and the fin can
-    turning relative to the canards;
-  * an event table.
-* **📈 Telemetry:** grouped time histories (trajectory, aerodynamics, attitude & rates, roll &
-  fin can, forces & moments, mass properties, environment, sensors & servos), with event markers, a time window,
-  a cursor, and the full state at the cursor. *Sensors & servos* compares every sensor with the truth
-  and shows canard command vs actual deflection and hinge moments. Full-rate sensor logs download as CSV.
-* **🔍 Explorer:** any logged variable against any other, with overlays from previous runs and a CSV download.
-* **🗺️ Trajectory:** ground track and altitude vs downrange.
-* **🧩 Vehicle & model:**
-  * side view with CG and CP;
-  * CP, CN_α and drag breakdown vs Mach;
-  * the build log (sources, overrides, motor checks);
-  * the effective config as YAML.
-* **🎲 Monte Carlo:** runs the config's dispersions in parallel, then shows end-point scatter,
-  histograms, input→output sensitivity plots and a CSV download.
-* **✅ OpenRocket:** overlays and coefficient comparison against a full OpenRocket CSV export in `data/`.
+* **Sidebar:** pick a base config, then edit any of these and press *Run*:
+  * launch, wind/turbulence, fin can and bearing, canard vortices, disturbances
+  * sensors on/off, servo parameters
+  * the controller and its parameters, or an open-loop canard schedule
+  * integrator settings, including the time on the pad
 
-## Single source of truth
+  Every edit becomes a listed override of the YAML and goes through the same strict checks as the
+  command-line tools. Each run is kept in a run history (*Show run*).
+* **Every graph is its own chart.** Hover a graph and use the fullscreen button at its top right to
+  enlarge it. Drag to zoom; double-click to reset.
+* **Launch:** animated 3D flight; close-up of the attitude, relative wind and the fin can turning; event table.
+* **Telemetry:** groups of time histories:
+  * controller, trajectory, aerodynamics, attitude, roll & fin can
+  * forces, mass, environment, sensors & servos
+
+  Pick the graphs to show in each group, choose how many graphs go in a row, set a time window and a cursor,
+  and see the full state at the cursor. The *Controller* group plots everything the controller reports
+  (`telemetry()`) and its estimates against the truth. Full-rate sensor logs download as CSV.
+* **Explorer:** any logged variable against any other, one graph per variable or overlaid, with runs
+  from the history overlaid; CSV download.
+* **Trajectory:** ground track, altitude vs downrange.
+* **Vehicle & model:**
+  * side view with CG and CP
+  * CP, CN_α and drag vs Mach
+  * canard vortex coupling
+  * build log and effective config
+* **Monte Carlo:** runs the config's dispersions; end points, apogee and roll histograms, max tilt,
+  input→output sensitivity plots, CSV.
+* **OpenRocket:** overlays and coefficient comparison with an OpenRocket CSV export in `data/`.
+
+## Writing a controller
+
+The controller is the flight software's guidance and control loop. Each simulation step goes like this:
+1. The sensors sample the true state.
+2. Every `1/rate_hz` the controller gets the new samples and returns one deflection per canard.
+3. The servo model moves the canards toward that command, under the aerodynamic load.
+
+Your controller sees exactly what the flight computer would see: the sensors, after their errors and delays.
+
+### 1. Run the example first
+
+```bash
+python scripts/run_sim.py configs/vertical_hold.yaml --apogee
+streamlit run dashboard/app.py          # pick vertical_hold.yaml, open Telemetry → Controller
+```
+
+`rocket_dt/controllers/vertical_hold.py` keeps the rocket's axis vertical and damps roll. Read it next
+to `rocket_dt/controllers/estimation.py`; together they are about 200 lines.
+
+### 2. Make your own
+
+Copy `vertical_hold.py` to `rocket_dt/controllers/my_controller.py`. A controller is a `Params` dataclass
+(its tunable numbers) plus a class with `reset()` and `update()`:
+
+```python
+from dataclasses import dataclass
+import numpy as np
+from rocket_dt.control import Controller, ControllerInput
+
+@dataclass
+class Params:
+    gain: float = 1.0                        # every field can be set from the YAML and the dashboard
+
+class MyController(Controller):
+    def __init__(self, rocket, cfg, params: Params):
+        self.p = params
+        self.n = rocket.aero.n_canards       # 4
+        self.reset()
+
+    def reset(self):                         # called before every run
+        self.roll_rate = 0.0
+
+    def update(self, inp: ControllerInput) -> np.ndarray:
+        for s in inp.sensors.imu.get("imu0", []):   # all new samples since the last call, oldest first
+            self.roll_rate = s.gyro[0]               # rad/s
+        return np.full(self.n, -0.001 * self.p.gain * self.roll_rate)   # rad, one per canard
+
+    def telemetry(self) -> dict:             # optional: logged as ctrl_<key>, shown in the dashboard
+        return {"roll_rate_est": self.roll_rate}
+```
+
+Register it in `rocket_dt/controllers/__init__.py`. Import your module next to `vertical_hold`, and add a
+line to `CONTROLLERS`:
+
+```python
+from rocket_dt.controllers import my_controller, vertical_hold
+
+CONTROLLERS = {
+    "none": (None, lambda rocket, cfg, params: NoControl(rocket.aero.n_canards)),
+    "vertical_hold": (vertical_hold.Params, vertical_hold.VerticalHold),
+    "my_controller": (my_controller.Params, my_controller.MyController),
+}
+```
+
+Then select it in a config that extends the baseline:
+
+```yaml
+extends: baseline.yaml
+controller:
+  type: my_controller
+  rate_hz: 100
+  params: {gain: 2.0}
+```
+
+### 3. What the controller gets
+
+| | |
+|---|---|
+| `inp.t` | time, s. Negative on the pad before ignition (`simulation.pad_time_s`, 5 s in the baseline); ignition is at 0 |
+| `inp.sensors.imu[name]` | list of `ImuSample(t, accel, gyro)`, in the sensor frame. Accel is specific force in m/s² (on the pad it reads +g along +x); gyro is rad/s |
+| `inp.sensors.baro` | list of `BaroSample(t, pressure [Pa], temperature [K])`. `rocket_dt.sensors.pressure_altitude()` converts pressure to altitude |
+| `inp.sensors.gnss` | list of `GnssSample(t, valid, position, velocity)`, ENU metres from the pad. NaN while there is no fix (no fix above 4 g, so none during the boost) |
+| `inp.truth` | the true state. Use it only for debugging, or to develop control with perfect knowledge before writing the estimator. Flight software can't have it |
+| `cfg.sensors` | where each sensor is mounted, its rate and its noise. `rocket.aero.fins` gives the canard positions |
+
+### 4. Conventions (get these wrong and the rocket flips)
+
+* **Body frame:** +x out of the nose, origin at the nose tip; station s (from the nose) is at x = −s.
+* **Ground frame:** ENU (x east, y north, z up) from the pad.
+* **Attitude:** quaternion, body → ENU (`rocket_dt/quaternion.py`).
+* **Canard numbering:** canard k sits at roll angle φ_k = k·90° from body +y. Its radial direction is
+  e_r = (0, cos φ_k, sin φ_k).
+* **Canard deflection:** positive gives positive roll about +x. It also gives a pitching moment about
+  −e_r. So canards k and k+2 deflected by equal and opposite amounts pitch the rocket and don't roll it.
+  `vertical_hold.py` shows the mixing.
+* **Units:** commands are in radians and limited to ±`actuators.canards.limit_deg`.
+* **Gain scheduling:** canard force and the rocket's own aerodynamic stiffness both scale with dynamic
+  pressure q. Gains expressed as "degrees of deflection per degree of tilt" therefore work at any speed;
+  rate damping should scale with 1/speed. One canard gives about 0.0101·q N m of pitch moment per rad.
+  The restoring moment is about 0.048·q N m per rad of angle of attack.
+* **Empty sample lists:** a disabled sensor produces no samples, and samples arrive at each sensor's own
+  rate. Expect empty lists and missing names.
+* **Telemetry keys:** `telemetry()` must return the same keys on every call.
+
+### 5. Test it properly
+
+* **Start simple, then make it real.**
+  * Begin with an ideal world: `actuators.canards.model: ideal`, or `inp.truth` instead of the estimator.
+  * Then use the real sensors and the servo model. Deadband (0.1°), resolution (0.09°) and backlash (0.2°)
+    are as large as the deflections roll control needs.
+* **Try the hard cases.**
+  * Tilt the rail (`launch.angle_from_vertical_deg`) and add wind.
+  * Use `fincan_disturbance_demo.yaml`, which has build errors that make the body roll.
+  * Run a Monte Carlo and look at the worst case of `max_tilt_deg`, not the mean.
+* **Look at the estimate against the truth.** *Telemetry → Controller* plots it. Most controller problems
+  are really estimator problems.
+
+### The example: `vertical_hold`
+
+**How it works.** The estimator (`controllers/estimation.py`):
+* averages the IMU on the pad, giving the gyro bias and the direction of gravity (the initial tilt)
+* detects launch when the IMU reads more than 3 g for five samples in a row
+* then integrates the gyro for attitude and the accelerometer for velocity, and takes air density from the barometer
+
+The controller:
+* works out the tilt error as e = b × up, where b is the estimated body axis
+* commands each canard pair with a PID on that error: kp·e + ki·∫e in the ground frame, minus (kd/V)·(pitch and yaw rate)
+* damps roll with −k_roll·p/V
+* is active only once the estimated speed exceeds 15 m/s (off the rail) and until apogee
+
+**Results** (`vertical_hold.yaml`: 5° rail, 4 m/s wind):
+
+| | No controller | `vertical_hold` |
+|---|---|---|
+| Max tilt from vertical | 88° | 7° |
+| Drift at apogee | 541 m | 98 m |
+| Apogee | 1738 m | 1786 m |
+
+The price is a higher angle of attack just off the rail (≈ 11°). Holding the rocket vertical at low speed
+means not turning into the wind.
+
+**Limits** (good first projects):
+
+* **Estimator accuracy is about 2–4° of tilt**, so the controller holds its *estimate* vertical.
+  * The pad levelling can't tell accelerometer bias (20 mg ≈ 1.2°) or misalignment (0.5°) from tilt.
+    Using the measured rail angle instead would remove that.
+  * Gyro g-sensitivity (0.1 °/s per g × 11 g during the boost) adds up to ≈ 4°.
+  * There's no aiding after launch: no barometer altitude and vertical speed, no GNSS once it has a fix again.
+* **Roll is only damped**, not held at an angle.
+* **The target is a fixed direction.** Following a path f(x, y, z) = 0 needs position feedback (guidance) on top.
+
+## Configuration
 
 | Quantity | Source | Notes |
 |---|---|---|
@@ -58,115 +263,69 @@ pytest -m "not slow"                                            # skip full flig
 | Thrust(t), per-grain propellant mass(t) | openMotor CSV | |
 | Grain geometry and order | openMotor `.ric` | Cross-checked against the CSV grain masses |
 | Loaded motor mass, case diameter/length | `.eng` header | `.eng` thrust and propellant mass are only cross-checked |
-| Launch site, wind, atmosphere, disturbances, integrator | YAML config | Simulation settings stored in the .ork are ignored |
-| Sensors, canard servos, canard hinge line | YAML config (`sensors`, `actuators`) | |
+| Launch site, wind, atmosphere, disturbances, integrator | YAML | Simulation settings stored in the .ork are ignored |
+| Canard vortex model | YAML `aero.canard_vortex` | |
+| Canard servos and hinge line | YAML `actuators.canards` | |
+| Sensors | YAML `sensors` | Each one has `enabled`; GNSS is off in the baseline |
+| Controller | YAML `controller` (`type`, `rate_hz`, `params`) | Types are registered in `rocket_dt/controllers/__init__.py` |
+| Monte Carlo spreads | YAML `montecarlo.dispersions` | Every run also gets new turbulence and sensor-error seeds |
 
-The config is strict: unknown keys, missing required keys, unknown override fields,
-ambiguous component paths and disagreeing motor files all raise errors. Child configs
-use `extends: baseline.yaml` and list only what differs (no copy-pasted parameters).
-`Transition#1` / `Transition#2` address siblings that share a name.
+The config is strict: unknown keys, missing required keys, unknown override fields, unknown controller
+parameters, ambiguous component paths and disagreeing motor files all raise errors. Child configs use
+`extends: baseline.yaml` and list only what differs. `Transition#1` / `Transition#2` address siblings
+that share a name.
 
 ## Model
 
-* **Frames:** inertial ENU with origin at the pad. Body frame: origin at the nose tip, +x forward;
-  a point at OpenRocket station X has body x = −X. Attitude is a unit quaternion
-  (body → ENU), so there is no gimbal lock. Euler-like angles are only derived for output.
-* **State:** CG position and velocity, quaternion, body rates, and the fin can's roll angle and rate
-  relative to the body. Fixed-step RK4 (default 2 ms). Canard commands and turbulence
-  are held constant within a step.
-* **Fin can:** an axisymmetric rotor on a bearing. Its spin angular momentum enters the
-  rigid-body equations (gyroscopic coupling), and only bearing friction couples its roll to the body
-  (Coulomb + viscous, smoothed with tanh). `fin_can.enabled: false` locks it.
+* **Frames:** inertial ENU with its origin at the pad. Body frame: origin at the nose tip, +x forward. A point
+  at OpenRocket station X has body x = −X. Attitude is a unit quaternion (body → ENU), so there is no gimbal
+  lock.
+* **State:** CG position and velocity, quaternion, body rates, and the fin can's roll angle and rate relative to
+  the body. Fixed-step RK4 (2 ms). Canard deflections and turbulence are held constant within a step.
+* **Fin can:** an axisymmetric rotor on a bearing. Its spin enters the rigid-body equations (gyroscopic
+  coupling), and only bearing friction couples its roll to the body (Coulomb + viscous, smoothed with tanh).
+  `fin_can.enabled: false` locks it.
 * **Aerodynamics** (`aero.py`): the extended Barrowman method as implemented in OpenRocket (Niskanen 2009),
-  evaluated with the *local* flow at every lifting element, so pitch and roll damping come out
-  of the lift model:
-  * nose/transitions: slender-body CNα (Jorgensen form for large α);
-  * body crossflow lift (K = 1.1), integrated over 2.5 cm slices;
-  * fins and canards: per-fin Diederich lift slope with K_T body interference, in spanwise strips (roll damping,
-    per-fin deflection for roll now and pitch/yaw control later), plus a flat-plate term at high α;
-  * drag buildup: skin friction with roughness limit, forward-facing/boattail pressure drag,
-    fin leading/trailing-edge drag by cross-section, base drag, and OpenRocket's axial-force-vs-α multiplier;
-  * canard vortices (`aero.canard_vortex`): each canard sheds one tip vortex whose strength comes from
-    *that canard's* normal force. The vortex and its image inside the body are carried to the fins aft of the
-    canards, with the body rolling under the vortex and the crossflow drifting it on the way. The velocity
-    they induce (Lamb–Oseen core) changes the angle of attack of every fin strip. The coupling is therefore
-    resolved per canard–fin pair (ready for independent canard actuation), depends on the fin-can angle,
-    and acts on pitch and yaw as well as roll. `static_cp` includes the resulting downwash.
-  
-  The model is valid subsonic only (to roughly Mach 0.8).
-* **Mass** (`mass.py`): every component is a mass element with a full inertia tensor
-  (shells of revolution with wall thickness measured normal to the surface, fins as plates, mass components as cylinders).
-  * The motor is the case hardware (a thick cylinder) plus four burning grains. Each grain's
-    core grows so that its mass follows openMotor.
-  * Jet damping and the dI/dt term are included.
-* **Environment:** ISA (temperature offset optional), latitude-dependent gravity, constant or
-  power-law wind, optional Dryden-type turbulence.
-* **Disturbances:** thrust misalignment and offset, thrust and drag scale, lateral CG offset,
-  per-fin misalignment for each fin set.
-* **Canard servos** (`actuators.py`, `actuators.canards`): one servo per canard, so canards can be commanded
-  independently. `model: ideal` follows the command; `model: servo` is a second-order position loop
+  evaluated with the local flow at every lifting element, so pitch and roll damping come out of the lift model.
+  * Nose and transitions: slender-body CNα, in Jorgensen's form for large α.
+  * Body crossflow lift (K = 1.1), over 2.5 cm slices.
+  * Fins and canards: per-fin Diederich lift slope with K_T body interference, in spanwise strips, plus a
+    flat-plate term at high α.
+  * Drag buildup: skin friction with a roughness limit, pressure drag, fin edge drag by cross-section, base
+    drag, and OpenRocket's axial-force-vs-α multiplier.
+  * Canard vortices (`aero.canard_vortex`): one tip vortex per canard, with its strength set by that canard's
+    lift. It and its image in the body are carried to the tail fins (roll lag, crossflow drift, Lamb–Oseen core)
+    and change every fin strip's angle of attack. The effect is resolved for each canard–fin pair, depends on the
+    fin-can angle, and includes the downwash that `static_cp` reports.
+  * Canard hinge moments: each strip's force acts at its local quarter chord, about the hinge line.
+  * Valid subsonic only (to about Mach 0.8).
+* **Mass** (`mass.py`): every component is a mass element with a full inertia tensor. The motor is the case
+  hardware plus four burning grains whose masses follow openMotor. Jet damping and the dI/dt term are
+  included.
+* **Environment:**
+  * ISA atmosphere (optional temperature offset), latitude-dependent gravity
+  * constant or power-law wind, optional Dryden-type turbulence
+* **Disturbances:**
+  * thrust misalignment and offset, thrust and drag scale
+  * lateral CG offset
+  * misalignment of each fin; for the canard set this is the canard zero offset
+* **Canard servos** (`actuators.py`): `ideal`, or `servo`. The servo model is a second-order position loop
   (natural frequency, damping, holding stiffness) with stall torque, a torque–speed rate limit, deadband,
-  command quantisation, backlash and mechanical stops. The load is the aerodynamic hinge moment: each canard
-  strip's normal force acts at its local quarter chord, and the moment is taken about the hinge line
-  (`hinge_from_root_le`, default the canard planform centroid). Positive canard deflection gives positive roll about +x.
-  Canard zero offsets are `disturbances.fin_misalignment_deg` of the canard set.
-* **Sensors** (`sensors.py`, `sensors`): any number of IMUs (accelerometer + gyro), a barometer and a GNSS
-  receiver, each with `enabled`, its own rate and latency, and its mounting station.
-  * IMU: specific force at the sensor point (including lever-arm terms), turn-on bias, bias drift,
-    white noise from the noise density, scale factor, misalignment, g-sensitivity, saturation, quantisation.
+  command quantisation, backlash and end stops, loaded by the hinge moment.
+* **Sensors** (`sensors.py`): each has its own rate, latency, mounting position and `enabled` switch, and its
+  own random stream from `sensors.seed`.
+  * IMU: specific force at the sensor point (with lever-arm terms), turn-on bias, bias drift, noise, scale
+    factor, misalignment, gyro g-sensitivity, saturation, quantisation.
   * Barometer: ISA pressure at the sensor, static-port error ∝ q, port lag, bias, noise, quantisation.
-  * GNSS: ENU position and velocity of the antenna, slowly varying position error plus noise, loss of lock above
-    `max_accel_g` and re-acquisition after `reacquire_s`.
-  * All errors come from `sensors.seed`, one random stream per sensor, so switching a sensor off leaves the
-    others' errors unchanged. Monte Carlo draws a new seed per run.
-* **Controller interface** (`control.py`): see *Writing a controller* below.
+  * GNSS: ENU position and velocity with a slowly varying error, loss of lock above 4 g, re-acquisition after 1 s.
+* **Pad phase:** for `simulation.pad_time_s` before ignition the rocket sits on the rail while the sensors,
+  controller and servos run, so flight software can calibrate.
 
-## Writing a controller
+## Validation (`configs/validation_openrocket.yaml` vs `data/all.csv`)
 
-Each simulation step, the sensors sample the true state; then the controller runs at its own rate
-(`rate_hz`, zero-order hold in between); then the servo model moves the canards under the current hinge moments.
-
-```python
-import numpy as np
-from rocket_dt import build_simulation, load_config
-from rocket_dt.control import Controller
-
-class RollDamper(Controller):
-    rate_hz = 100.0
-
-    def __init__(self, n_canards):
-        self.n = n_canards
-
-    def reset(self):                      # called at the start of every run
-        self.p = 0.0
-
-    def update(self, inp):                # inp: ControllerInput
-        for s in inp.sensors.imu.get("imu0", []):   # every new sample since the last call, oldest first
-            self.p = s.gyro[0]            # rad/s, sensor frame
-        return np.full(self.n, -0.0005 * self.p)    # one command per canard, rad
-
-cfg = load_config("configs/baseline.yaml")
-sim = build_simulation(cfg)
-sim.controller = RollDamper(sim.rocket.aero.n_canards)
-result = sim.run()       # result.data: flight log, result.sensors: full-rate sensor logs
-```
-
-* `inp.sensors.imu[name]`: list of `ImuSample(t, accel, gyro)`. Accel is specific force in m/s², gyro is rad/s,
-  both in the sensor frame. On the pad the accelerometer reads +g along +x.
-* `inp.sensors.baro`: list of `BaroSample(t, pressure, temperature)`. `sensors.pressure_altitude()` converts pressure to altitude.
-* `inp.sensors.gnss`: list of `GnssSample(t, valid, position, velocity)`, ENU metres from the pad; NaN when not valid.
-* A disabled sensor produces no samples, so the controller must cope with empty lists and missing names.
-* `inp.truth` is the true state. Use it only for debugging, or to develop a controller with perfect state knowledge
-  before writing the estimator. Flight software can't have it.
-* The mounting (station, orientation) of every sensor is in `cfg.sensors`.
-* Canard index k sits at roll angle k·360°/n from body +y. Deflections are in rad: positive means positive roll.
-  Equal and opposite deflections on opposite canards (k and k+2) give pitch and yaw.
-
-## Validation (configs/validation_openrocket.yaml vs data/all.csv)
-
-`all.csv` came from an older revision of the design (`yay it works.rkt`). The validation config
-rebuilds that revision from the current .ork with five logged overrides. The fin can is locked
-because OpenRocket can't model it.
+`all.csv` came from an older revision of the design (`yay it works.rkt`). The validation config rebuilds that
+revision from the current .ork with five logged overrides, locks the fin can (OpenRocket can't model it),
+and switches the canard vortices off (OpenRocket ignores them).
 
 | | rocket_dt | OpenRocket |
 |---|---|---|
@@ -179,59 +338,49 @@ because OpenRocket can't model it.
 
 Component masses match OpenRocket to better than 0.001 %. Known, intended differences:
 * **Roll inertia (+16 %):** OpenRocket models the motor as a solid cylinder.
-* **Damping:** OpenRocket uses empirical damping terms, so its AoA oscillation is less damped.
+* **Damping:** OpenRocket uses empirical damping terms, so its angle-of-attack oscillation is less damped.
 * **Descent:** OpenRocket clips fin lift at 20° and falls tail-first; this model falls broadside.
 
-## Placeholders and assumptions to replace with measured data
+## Placeholders to replace with measured data
 
 | Item | Current value | Replace with |
 |---|---|---|
-| Fin-can roll inertia | 0.026 kg m² (upper-bound estimate) | CAD: select the Fin Can component → Properties |
+| Fin-can roll inertia | 0.026 kg m² (upper-bound estimate) | CAD: select the fin can → Properties |
 | Bearing friction (61820) | 0.02 N m Coulomb, 1e-4 N m s viscous | spin-down test of the built fin can |
-| Grain position in case | stack centred, no gaps | real motor drawing |
-| Case hardware CG | case centre | real motor drawing |
-| Canard servo | 15 Hz, ζ 0.7, 40 N m/rad, 1.5 N m stall, 500 °/s, deadband 0.1°, resolution 0.09°, backlash 0.2° | bench tests: small-step response, torque vs deflection, datasheet, play at the canard |
+| Grain position in case, case hardware CG | stack centred, no gaps; case centre | real motor drawing |
+| Canard servo | 15 Hz, ζ 0.7, 40 N m/rad, 1.5 N m stall, 500 °/s, deadband 0.1°, resolution 0.09°, backlash 0.2° | bench tests: small-step response, torque vs deflection, play at the canard |
 | Canard hinge line | planform centroid (54 mm aft of the root LE) | the real hinge position |
-| IMUs | ICM-42688- and BMI088-class datasheet values, both at station 1.015 m | the chosen parts' datasheets, their real mounting positions, and a calibration on the bench |
+| IMUs | ICM-42688- and BMI088-class datasheet values, both at station 1.015 m | the chosen parts' datasheets and real mounting; bench calibration |
 | Barometer | MS5611-class, static-port error 0 | datasheet; static-port coefficient from flight data |
-| GNSS | M10-class, loses lock above 4 g, re-acquires after 1 s, **disabled** | the chosen receiver's dynamics limits |
-| Canard vortex strength / core radius | factor 1.0 / 6 mm (dispersed 0.5–1.5 in Monte Carlo) | CFD, or fin-can spin rate under a known canard offset in flight |
+| GNSS | M10-class, off | the chosen receiver's dynamics limits |
+| Canard vortex strength / core radius | factor 1.0 / 6 mm (dispersed 0.5–1.5 in Monte Carlo) | CFD, or fin-can spin under a known canard offset in flight |
+| `vertical_hold` gains | kp 4, ki 2, kd 60 m, k_roll 0.36 m | tuning against the measured servo and sensors |
 
-## Findings so far (current .ork)
+## Findings so far
 
-* **Apogee ≈ 1794 m** (tail fins `airfoil`, zero-lift CD ≈ 0.41 at Mach 0.3). The gap to the older revision's
-  1926 m is mostly ≈ 1.1 kg of extra mass (liftoff 18.26 kg vs 17.15 kg). With the tail fins modelled as `square`
-  (10 mm blunt edges), as an earlier .ork had them, CD would be ≈ 0.76 and apogee ≈ 1513 m.
-* **Static margin ≈ 1.8–2.2 cal** during ascent. Canard downwash on the tail costs ≈ 0.14 cal
-  (tail normal force −5 %). The validation config switches the vortices off, as OpenRocket ignores them.
-* **Roll authority is very high with a free fin can.** The canards are the body's only roll damping,
-  so the steady body roll rate is ≈ K_T·δ·V / r_canard: 0.1° of canard misalignment gives ≈ 300 °/s,
-  and 5° gives ≈ 11,000 °/s. Roll control will work with deflections of hundredths to tenths of a
-  degree, so servo resolution, backlash and canard zero-offset matter a lot.
-* **The hinge moment pushes the canards away from neutral.** With the hinge at the planform centroid, the
-  canard's centre of pressure is 16 mm ahead of it, so the load increases the deflection. With the placeholder servo,
-  a 0.5° command becomes ≈ 0.70° in flight: ≈ 0.11° from the servo's compliance plus the 0.1° half-backlash.
-  The body roll rate comes out ≈ 40 % higher than with an ideal actuator. Hinge moments stay below 0.1 N m in the
-  baseline flights, far below the stall torque. Even with zero command, angle-of-attack loads hold the canards at
-  ≈ ±0.17° inside the backlash, which is comparable to the deflections roll control needs. Moving the hinge forward
-  of the canard's centre of pressure (≈ 38 mm aft of the root LE) would reverse the load.
-* **The ballistic descent is very sensitive.** Without recovery events the rocket falls broadside, which is only
-  marginally stable. Small servo deflections tip it into a nose-first dive earlier (landing at ≈ 41 s with the servo
-  model, against ≈ 52 s with the ideal actuator). The ascent is not affected.
-* **Canard vortices reverse roll on the tail.** The torque they induce on the fin can is −0.65 × the canard
-  roll moment when the fins are in line with the canards, and −1.0 × when the vortices pass midway between fins
-  (Mach 0.3; plot in the dashboard's *Vehicle & model* tab). A free fin can absorbs this, so the
-  body roll response is unchanged. The fin can is kicked the opposite way during canard transients (≈ −66 °/s
-  for a 0.5° step). In steady roll, each canard's net lift is close to zero, and so is the coupling.
-  * The in-line value depends on the core radius (−0.49 at 3 mm, −0.69 at 12 mm); the midway value does not.
-  * Limitation: one vortex per canard, carrying only the net lift. When a canard's span loading changes sign
-    (deflection against roll damping), the counter-rotating vorticity it really sheds is not represented.
-    A vortex-sheet (multi-filament) model would fix that.
+* **Static margin is 1.8–2.2 cal** during the ascent. Canard downwash on the tail costs ≈ 0.14 cal.
+* **Roll authority is very high with a free fin can.** The canards are the body's only roll damping, so
+  0.1° of canard misalignment gives ≈ 300 °/s of body roll, and 5° gives ≈ 11,000 °/s. Servo resolution,
+  backlash and canard zero offset matter a lot.
+* **The hinge moment pushes the canards away from neutral.** The canard's CP is 16 mm ahead of a centroid hinge.
+  * With the placeholder servo, a 0.5° command becomes ≈ 0.70° in flight: servo compliance plus half the
+    backlash.
+  * Even with zero command, angle-of-attack loads hold the canards at ≈ ±0.17° inside the backlash.
+  * A hinge about 38 mm aft of the root LE (at the CP) would remove most of the load.
+* **Canard vortices reverse the roll on the tail.**
+  * The torque they induce on the fin can is −0.65× the canard roll moment with the fins in line with the
+    canards, and −1.0× with the vortices midway between fins.
+  * The free fin can absorbs this, so it is kicked the opposite way during canard transients, while the
+    body's roll response is unchanged.
+  * Limitation: one vortex per canard, carrying only its net lift.
+* **Without recovery events the descent is ballistic and very sensitive.** The rocket falls broadside and small
+  canard deflections tip it nose-first. Only the ascent results are meaningful.
 
 ## Next steps
 
-1. State estimator (attitude, position, velocity) from the sensors.
-2. Guidance and control: follow the ideal path f(x, y, z) = 0 (a vertical line, or along a rail tilted up to
-   ≈ 5°), plus roll control. Later, run the real flight software inside the sim.
-3. Bench-test the servo and replace the placeholder sensor and servo values.
-4. Recovery events (drogue/main) for full descent and landing dispersion.
+1. Estimator: aid the attitude and velocity with the barometer (and GNSS when flown); level with the known rail angle.
+2. Guidance: follow a path f(x, y, z) = 0 (a vertical line, or along a rail tilted up to ≈ 5°) instead of a fixed
+   direction; add roll-angle hold.
+3. Bench-test the servo and sensors and replace the placeholders above.
+4. Recovery events (drogue/main) for the descent and landing dispersion.
+5. Run the real flight software inside the simulation (software in the loop).

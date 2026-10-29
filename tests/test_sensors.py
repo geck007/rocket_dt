@@ -165,7 +165,7 @@ def test_closed_loop_plumbing_with_all_sensors(root):
     sim = build_simulation(cfg)
     ctrl = sim.controller = _Recorder(sim.rocket.aero.n_canards)
     res = sim.run()
-    T = res.events["apogee"]
+    T = res.events["apogee"] + cfg.simulation.pad_time_s  # sensors and controller also run on the pad
     assert set(ctrl.imu) == {"imu0"} and set(res.sensors) == {"imu0", "baro", "gnss"}
     assert len(ctrl.imu["imu0"]) == pytest.approx(500 * T, abs=3)
     assert len(ctrl.baro) == pytest.approx(50 * T, abs=2)

@@ -28,8 +28,9 @@ def test_figures_build(flight):
     assert len(launch.frames) > 5 and len(att.frames) > 5
     # frames only carry coordinates; mesh connectivity stays in the base traces
     assert att.frames[0].data[0].i is None and att.data[0].i is not None
-    viz.fig_panels(d, r.events, [("alt", [("z", d["z"])]), ("v", [("v", d["speed"])])])
+    viz.fig_panel(d, r.events, "alt", [("z", d["z"]), ("v", d["speed"])], cursor=1.0)
     viz.fig_ground_track(d)
+    viz.fig_altitude_downrange(d)
     viz.fig_side_view(g, {"CG": 1.2}, 1.5)
     s = viz.static_curves(sim.rocket)
     assert np.all(np.diff(s["cp"]) > -1e-6)  # CP moves aft with Mach (subsonic fins)

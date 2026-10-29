@@ -45,11 +45,13 @@ def _run_one(args) -> dict:
     d = r.data
     i_apo = int(np.argmax(d["z"]))
     fast = d["airspeed"][:i_apo + 1] > 20.0
+    after_rail = d["t"][:i_apo + 1] >= r.events.get("rail_exit", 0.0)
     out = {"run": i, **values,
            "apogee": float(d["z"][i_apo]), "t_apogee": r.events.get("apogee", np.nan),
            "rail_exit_speed": r.events.get("rail_exit_speed", np.nan),
            "max_mach": float(d["mach"].max()),
            "max_aoa_deg": float(np.degrees(d["aoa"][:i_apo + 1][fast].max())),
+           "max_tilt_deg": float(np.degrees(d["zenith_angle"][:i_apo + 1][after_rail].max())),
            "min_margin_cal": float(np.nanmin(d["stability_cal"][:i_apo + 1])),
            "max_body_roll_dps": float(np.degrees(np.abs(d["p"][:i_apo + 1]).max())),
            "max_fincan_roll_dps": float(np.degrees(np.abs(d["fincan_rate_abs"][:i_apo + 1]).max())),

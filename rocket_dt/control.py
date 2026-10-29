@@ -1,31 +1,21 @@
-"""Canard control interfaces.
+"""Controller interface.
 
 The simulation calls ``controller.update(inp)`` at ``controller.rate_hz`` and holds the
 returned command (one deflection per canard, rad) until the next call (zero-order
-hold), exactly like flight software running in a fixed-rate loop. The actuator model
+hold), like flight software running in a fixed-rate loop. The actuator model
 (actuators.py) turns commands into actual canard deflections.
 
 ``inp.sensors`` holds every sensor sample that has become available since the previous
 call (after each sensor's latency), oldest first. Flight software must only use these.
-``inp.truth`` is the true state, provided for debugging and for developing a controller
-with perfect state knowledge before adding an estimator; do not use it in a controller
-meant to fly.
+``inp.truth`` is the true state, for debugging and for developing a controller with
+perfect state knowledge before adding an estimator; a controller meant to fly must
+not use it.
 
-Writing a controller::
+Optional ``telemetry()``: a dict of floats (the same keys on every call) that is
+logged with the flight as ``ctrl_<key>`` columns.
 
-    class MyController(Controller):
-        rate_hz = 100.0
-
-        def __init__(self, n_canards):
-            self.n = n_canards
-
-        def reset(self):
-            self.roll_rate = 0.0
-
-        def update(self, inp):
-            for s in inp.sensors.imu.get("imu0", []):
-                self.roll_rate = s.gyro[0]
-            return np.full(self.n, -0.001 * self.roll_rate)
+Controllers that can be chosen from a config are registered in
+``rocket_dt.controllers``; see ``rocket_dt/controllers/vertical_hold.py`` for an example.
 """
 
 from __future__ import annotations
@@ -34,7 +24,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from rocket_dt.actuators import IdealActuator  # noqa: F401  (re-exported for existing imports)
 from rocket_dt.sensors import SensorReadings
 
 
@@ -53,7 +42,7 @@ class TruthSnapshot:
 
 @dataclass
 class ControllerInput:
-    t: float
+    t: float  # s; negative while on the pad before ignition (simulation.pad_time_s)
     sensors: SensorReadings  # new samples since the previous update
     truth: TruthSnapshot  # debugging / ideal-sensor studies only
 
@@ -62,7 +51,7 @@ class Controller:
     rate_hz: float = 100.0
 
     def reset(self) -> None:
-        pass
+        """Called at the start of every run."""
 
     def update(self, inp: ControllerInput) -> np.ndarray:
         raise NotImplementedError

@@ -1,0 +1,24 @@
+# Example closed-loop flight: the vertical_hold controller (rocket_dt/controllers/vertical_hold.py)
+# keeps the rocket's axis vertical using only the sensors. The rail is tilted 5 deg, with 4 m/s of wind.
+extends: baseline.yaml
+
+launch:
+  angle_from_vertical_deg: 5.0
+
+environment:
+  wind:
+    speed: 4.0
+
+controller:
+  type: vertical_hold
+  rate_hz: 100.0
+  params:
+    kp: 4.0                 # canard-pair deflection per rad of tilt
+    ki: 2.0
+    kd: 60.0                # m (rate damping = kd / speed)
+    k_roll: 0.36            # m (roll damping = k_roll / speed)
+    max_deflection_deg: 10.0
+    min_speed: 15.0
+
+simulation:
+  stop_at: apogee

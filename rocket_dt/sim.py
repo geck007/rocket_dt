@@ -24,7 +24,9 @@ Integration: fixed-step RK4. Inputs that come from discrete-time processes
 Each step: sensors sample the state (sensors.py), the controller runs at its own
 rate on the samples that have become available (control.py), and the actuator
 model advances the canards over the step under the latest hinge moments
-(actuators.py).
+(actuators.py). With ``simulation.pad_time_s`` > 0 the sensors, controller and
+servos first run for that long with the rocket at rest on the pad (t < 0), so
+flight software can calibrate; ignition is at t = 0.
 """
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ class FlightResult:
         d, ev = self.data, self.events
         i_apo = int(np.argmax(d["z"]))
         fast = d["airspeed"][:i_apo + 1] > 20.0  # AoA is meaningless near zero airspeed
+        after_rail = d["t"][:i_apo + 1] >= ev.get("rail_exit", 0.0)
         lines = [f"Flight of '{self.rocket_name}' ({self.wall_time:.1f} s wall time)"]
         for k in ("liftoff", "rail_exit", "burnout", "apogee", "ground_hit"):
             if k in ev:
@@ -100,6 +103,7 @@ class FlightResult:
             f"  rail exit speed  {ev.get('rail_exit_speed', float('nan')):9.2f} m/s",
             f"  max accel        {d['accel_axial'].max():9.1f} m/s^2 ({d['accel_axial'].max() / 9.81:.1f} g)",
             f"  max AoA (ascent, airspeed > 20 m/s) {np.degrees(d['aoa'][:i_apo + 1][fast].max()):6.2f} deg",
+            f"  max tilt from vertical (rail exit to apogee) {np.degrees(d['zenith_angle'][:i_apo + 1][after_rail].max()):6.2f} deg",
             f"  min stab. margin {np.nanmin(d['stability_cal'][:i_apo + 1]):9.2f} cal (ascent, after rail)",
             f"  max |body roll|  {np.degrees(np.abs(d['p']).max()):9.1f} deg/s",
             f"  max |fin-can roll rate (inertial)| {np.degrees(np.abs(d['fincan_rate_abs']).max()):9.1f} deg/s",
@@ -271,6 +275,17 @@ class Simulation:
         delta = self.actuator.deflection.copy()
         command = delta.copy()
         self._command = command
+        for step in range(-int(round(cfg.pad_time_s / dt)), 0):  # on the pad before ignition, nothing moves
+            tp = step * dt
+            if self.sensors.active:
+                truth = self._sensor_truth(tp, y, delta, phase, False)
+                truth.accel, truth.omega_dot = np.zeros(3), np.zeros(3)
+                self.sensors.step(step, truth)
+            if step % ctrl_every == 0:
+                command = np.asarray(self.controller.update(
+                    ControllerInput(tp, self.sensors.read(tp), self._snapshot(tp, y))), dtype=float)
+                self._command = command
+            delta = self.actuator.step(command, dt, np.zeros_like(command))
         step = 0
         max_steps = int(cfg.t_max / dt) + 1
 
@@ -403,5 +418,8 @@ class Simulation:
             row[f"canard_cmd_{i}"] = self._command[i]
             row[f"hinge_moment_{i}"] = hinge[i]
             row[f"vortex_roll_{i}"] = each[i]
+        telemetry = getattr(self.controller, "telemetry", None)
+        if telemetry is not None:
+            row.update({f"ctrl_{k}": v for k, v in telemetry().items()})
         for k, v in row.items():
             log.setdefault(k, []).append(float(v))

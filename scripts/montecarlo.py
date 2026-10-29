@@ -30,7 +30,7 @@ def main():
     save_results(results, out / "runs.csv")
     apo = np.array([r["apogee"] for r in results])
     print(f"{len(results)} runs: apogee {apo.mean():.1f} +- {apo.std():.1f} m (min {apo.min():.0f}, max {apo.max():.0f})")
-    for k in ("max_aoa_deg", "min_margin_cal", "rail_exit_speed", "max_body_roll_dps", "max_fincan_roll_dps"):
+    for k in ("max_tilt_deg", "max_aoa_deg", "min_margin_cal", "rail_exit_speed", "max_body_roll_dps", "max_fincan_roll_dps"):
         v = np.array([r[k] for r in results])
         print(f"  {k:22s} mean {v.mean():8.2f}  min {v.min():8.2f}  max {v.max():8.2f}")
     print("wrote", plot_results(results, out))

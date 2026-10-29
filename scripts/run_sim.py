@@ -1,7 +1,10 @@
-"""Run one simulation from a config.
+"""Run one simulation from a config (with the controller named in its ``controller`` section).
 
-    python scripts/run_sim.py configs/baseline.yaml [--apogee] [--locked]
+    python scripts/run_sim.py configs/vertical_hold.yaml [--apogee] [--locked]
         [--canard-schedule "t0:deg0,t1:deg1,..."] [--out output/run]
+
+--canard-schedule replaces the controller with an open-loop roll deflection schedule.
+Writes flight.csv, one sensor_<name>.csv per sensor and plots to the output directory.
 """
 
 import argparse

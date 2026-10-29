@@ -322,7 +322,6 @@ def _parse_finset(el: ET.Element) -> FinSet:
 
 def _parse_recovery(el: ET.Element) -> MassComponent:
     tag = el.tag
-    name = el.findtext("name")
     mat = _material(el)
     if tag == "parachute":
         d = _f(el, "diameter")

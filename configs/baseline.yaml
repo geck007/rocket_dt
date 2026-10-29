@@ -104,11 +104,15 @@ disturbances:
   thrust_offset_m: [0.0, 0.0]
   fin_misalignment_deg: {}
 
+controller:
+  type: none                            # a name from rocket_dt/controllers/__init__.py (see vertical_hold.yaml)
+
 simulation:
   dt: 0.002
   t_max: 300.0
   stop_at: ground
   log_dt: 0.01
+  pad_time_s: 5.0                       # sensors + controller run on the pad first (calibration)
 
 montecarlo:
   n_runs: 50

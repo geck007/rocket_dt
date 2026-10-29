@@ -17,7 +17,7 @@ def main():
     or_csv = sys.argv[2] if len(sys.argv) > 2 else ROOT / "data/all.csv"
     out = Path(sys.argv[3]) if len(sys.argv) > 3 else ROOT / "output/validation"
     sim = build_simulation(load_config(cfg_path))
-    print("\n".join(sim.rocket.notes), "\n")
+    print("\n".join(sim.notes), "\n")
     result = sim.run()
     print(result.summary(), "\n")
     report, series = compare(result, sim.rocket, or_csv)

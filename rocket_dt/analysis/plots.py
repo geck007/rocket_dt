@@ -25,7 +25,7 @@ def plot_flight(result: FlightResult, out_dir: str | Path) -> list[Path]:
     panels = [
         ("Altitude AGL [m]", [("z", d["z"])]),
         ("Speed [m/s]", [("inertial", d["speed"]), ("air", d["airspeed"])]),
-        ("Mach", [("Mach", d["mach"])]),
+        ("Tilt from vertical [deg]", [("tilt", np.degrees(d["zenith_angle"]))]),
         ("Angle of attack [deg]", [("AoA", np.degrees(d["aoa"]))]),
         ("Stability margin [cal]", [("margin", d["stability_cal"])]),
         ("Drag coefficient", [("CD0", d["cd"]), ("C_A", d["ca"])]),

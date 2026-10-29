@@ -10,6 +10,7 @@ validation and build path as the command-line tools.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import html
 import json
 import math
@@ -21,12 +22,12 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 import yaml
-from plotly.subplots import make_subplots
 
 from rocket_dt import viz
 from rocket_dt.builder import build_rocket, build_simulation
-from rocket_dt.config import ConfigError, get_by_path, load_raw, parse_config, set_by_path
+from rocket_dt.config import ConfigError, load_raw, parse_config, set_by_path
 from rocket_dt.control import RollDeflectionSchedule
+from rocket_dt.controllers import CONTROLLERS, params_class
 from rocket_dt.io.ork import FinSet, load_ork
 from rocket_dt.sim import FlightResult
 
@@ -82,6 +83,30 @@ def kpi_cards(items) -> None:
 
 def section(title: str) -> None:
     st.markdown(f'<div class="dt-section">{html.escape(title)}</div>', unsafe_allow_html=True)
+
+
+def chart(fig, key: str) -> None:
+    """One graph; hover it and use the fullscreen button (top right) to enlarge it."""
+    st.plotly_chart(fig, width="stretch", key=key, config={"displaylogo": False})
+
+
+def chart_grid(figs, per_row: int, key: str) -> None:
+    """figs: list of (name, figure), laid out per_row to a row."""
+    for i in range(0, len(figs), per_row):
+        for col, (name, fig) in zip(st.columns(per_row), figs[i:i + per_row]):
+            with col:
+                chart(fig, f"{key}:{name}")
+
+
+def simple_fig(traces, title, xtitle=None, ytitle=None, height=360, **layout) -> go.Figure:
+    fig = go.Figure(traces)
+    fig.update_layout(title=dict(text=title, font=dict(size=13)), height=height,
+                      margin=dict(l=40, r=20, t=40, b=40), **layout)
+    if xtitle:
+        fig.update_xaxes(title_text=xtitle)
+    if ytitle:
+        fig.update_yaxes(title_text=ytitle)
+    return fig
 
 
 # ----------------------------------------------------------------------------- cached computations
@@ -266,9 +291,25 @@ with st.sidebar.form("scenario"):
              min_value=0.0, step=0.01, format="%.3f")
         knob("Backlash [°]", "actuators.canards.backlash_deg", a_.backlash_deg, st.number_input,
              min_value=0.0, step=0.05, format="%.3f")
+    with st.expander("Controller"):
+        ctl = c.controller
+        kind = knob("Controller", "controller.type", ctl.type,
+                    lambda label, value, **k: st.selectbox(label, list(CONTROLLERS), index=list(CONTROLLERS).index(value),
+                                                           help="After changing it, press Run to see its parameters.",
+                                                           **k))
+        knob("Controller rate [Hz]", "controller.rate_hz", ctl.rate_hz, st.number_input, min_value=1.0, step=10.0)
+        pc = params_class(kind)
+        if pc is not None:
+            for f in dataclasses.fields(pc):
+                default = f.default if f.default is not dataclasses.MISSING else None
+                if not isinstance(default, (int, float)) or isinstance(default, bool):
+                    continue
+                cur = ctl.params.get(f.name, default) if kind == ctl.type else default
+                knob(f.name, f"controller.params.{f.name}", float(cur), st.number_input, format="%.4g")
     with st.expander("Canards (open loop)"):
         schedule = st.text_input("Roll deflection schedule  t:deg, …", value="", key=f"{cfg_name}:schedule",
-                                 help="e.g. 0:0, 3:0, 3.01:0.5, 6:0.5, 6.01:0 — linear interpolation. Empty = canards at 0.")
+                                 help="e.g. 0:0, 3:0, 3.01:0.5, 6:0.5, 6.01:0 — linear interpolation. "
+                                      "Replaces the controller. Empty = use the controller.")
     with st.expander("Integrator"):
         s = c.simulation
         knob("Time step [s]", "simulation.dt", s.dt,
@@ -277,12 +318,14 @@ with st.sidebar.form("scenario"):
              lambda label, value, **k: st.radio(label, ["apogee", "ground"], index=["apogee", "ground"].index(value),
                                                 horizontal=True, **k))
         knob("Max time [s]", "simulation.t_max", s.t_max, st.number_input, step=10.0)
+        knob("Time on the pad before ignition [s]", "simulation.pad_time_s", s.pad_time_s, st.number_input,
+             min_value=0.0, step=1.0, help="Sensors and controller run with the rocket at rest (calibration).")
     run_label = st.text_input("Run label", value="", placeholder="optional name for the run history")
     submitted = st.form_submit_button("Run simulation", type="primary", width="stretch")
 
 raw_json = json.dumps(raw, sort_keys=True)
 if "runs" not in st.session_state:
-    st.session_state.runs = {}  # label -> (raw_json, schedule)
+    st.session_state.runs = {}  # label -> (raw_json, schedule, edits)
     submitted = True  # run the base configuration on first load
 
 if submitted:
@@ -311,6 +354,7 @@ d, ev, geom = R["data"], R["events"], R["geom"]
 t = d["t"]
 i_apo = int(np.argmax(d["z"]))
 fast = d["airspeed"][: i_apo + 1] > 20.0
+after_rail = (t >= ev.get("rail_exit", 0.0)) & (np.arange(len(t)) <= i_apo)
 
 # ----------------------------------------------------------------------------- header + KPIs
 
@@ -336,6 +380,8 @@ kpi_cards([
     ("Rail exit", f"{ev.get('rail_exit_speed', float('nan')):.1f} m/s",
      f"t = {ev.get('rail_exit', float('nan')):.3f} s", ACCENT["speed"]),
     ("Max AoA", f"{np.degrees(d['aoa'][: i_apo + 1][fast].max()):.2f}°", "airspeed > 20 m/s", ACCENT["aero"]),
+    ("Max tilt", f"{np.degrees(d['zenith_angle'][after_rail].max()):.1f}°", "from vertical, rail exit → apogee",
+     ACCENT["aero"]),
     ("Min margin", f"{min_margin:.2f} cal", "ascent", ACCENT["aero"]),
     ("Max roll, body", f"{np.degrees(np.abs(d['p']).max()):.0f}°/s", None, ACCENT["roll"]),
     ("Max roll, fin can", f"{np.degrees(np.abs(d['fincan_rate_abs']).max()):.0f}°/s", "inertial", ACCENT["roll"]),
@@ -361,12 +407,11 @@ with tabs[0]:
     view = c4.radio("View", ["Flight", "Vehicle close-up", "Both"], index=2, horizontal=True)
     t_end = {"Ascent": ev.get("apogee", t[-1]), "Whole flight": t[-1], "Boost (first 4 s)": 4.0}[span]
     if view in ("Flight", "Both"):
-        st.plotly_chart(viz.fig_launch(d, geom, ev, n_frames, t_end, rocket_scale=rscale or None),
-                        width="stretch")
+        chart(viz.fig_launch(d, geom, ev, n_frames, t_end, rocket_scale=rscale or None), "launch:flight")
     if view in ("Vehicle close-up", "Both"):
         st.caption("Close-up at the CG: grey body, red canards, blue fins on the free-spinning fin can "
                    "(watch them turn relative to the canards), green = velocity relative to the air.")
-        st.plotly_chart(viz.fig_attitude(d, geom, n_frames, t_end), width="stretch")
+        chart(viz.fig_attitude(d, geom, n_frames, t_end), "launch:closeup")
 
     section("Flight events")
     st.dataframe(pd.DataFrame([{"event": k, "t [s]": round(v, 3),
@@ -467,16 +512,37 @@ if S or any(f"canard_cmd_{k}" in d for k in range(R["n_canards"])):
                  ("GNSS fix valid", [("valid", _hold(n["t"], n["valid"]))])]
     GROUPS["Sensors & servos"] = sens
 
+ctrl_keys = [k for k in d if k.startswith("ctrl_")]
+if ctrl_keys:
+    ctrl = [(k.removeprefix("ctrl_"), [(k.removeprefix("ctrl_"), d[k])]) for k in ctrl_keys]
+    if "ctrl_tilt_est_deg" in d:
+        ctrl.insert(0, ("Tilt from vertical: estimate vs truth [°]",
+                        [("truth", d["zenith_angle"] * DEG), ("estimate", d["ctrl_tilt_est_deg"])]))
+    if "ctrl_speed_est" in d:
+        ctrl.insert(1, ("Speed: estimate vs truth [m/s]", [("truth", d["speed"]), ("estimate", d["ctrl_speed_est"])]))
+    GROUPS["Controller"] = ctrl
+
 with tabs[1]:
-    c1, c2, c3 = st.columns([2, 3, 1])
-    groups = c1.multiselect("Groups", list(GROUPS), default=["Trajectory", "Aerodynamics", "Roll & fin can"])
+    c1, c2, c3, c4 = st.columns([3, 3, 1, 1])
+    default_groups = ["Controller"] if "Controller" in GROUPS else []
+    groups = c1.multiselect("Groups", list(GROUPS), default=default_groups + ["Trajectory", "Roll & fin can"])
     t_lo, t_hi = c2.slider("Time window [s]", 0.0, float(t[-1]), (0.0, float(ev.get("apogee", t[-1]))), 0.1)
     cursor = c3.number_input("Cursor t [s]", 0.0, float(t[-1]), float(min(ev.get("burnout", 0.0), t[-1])), 0.1)
+    per_row = c4.selectbox("Graphs per row", [1, 2, 3, 4], index=2)
+    st.caption("Pick the graphs to show in each group. Hover a graph and use the fullscreen button "
+               "(top right) to enlarge it; drag to zoom, double-click to reset.")
     for g in groups:
         section(g)
-        fig = viz.fig_panels(d, ev, GROUPS[g], cols=3 if len(GROUPS[g]) > 4 else 2, t_max=t_hi, cursor=cursor)
-        fig.update_xaxes(range=[t_lo, t_hi])
-        st.plotly_chart(fig, width="stretch")
+        titles = [p[0] for p in GROUPS[g]]
+        shown = st.pills(f"{g} graphs", titles, selection_mode="multi", default=titles, key=f"pills:{g}",
+                         label_visibility="collapsed") or []
+        figs = []
+        for title, lines in GROUPS[g]:
+            if title in shown:
+                fig = viz.fig_panel(d, ev, title, lines, t_max=t_hi, cursor=cursor, height=300 if per_row > 1 else 420)
+                fig.update_xaxes(range=[t_lo, t_hi])
+                figs.append((title, fig))
+        chart_grid(figs, per_row, f"tel:{g}")
     i_c = int(min(np.searchsorted(t, cursor), len(t) - 1))
     with st.expander(f"Full state at t = {t[i_c]:.3f} s"):
         st.dataframe(pd.DataFrame({"value": {k: v[i_c] for k, v in d.items()}}), width="stretch")
@@ -496,18 +562,22 @@ with tabs[2]:
     ys = c1.multiselect("Variables", keys, default=["z", "speed"])
     xk = c2.selectbox("x axis", keys, index=keys.index("t"))
     others = c3.multiselect("Overlay runs", [r for r in runs if r != current])
-    sep = st.checkbox("One subplot per variable", value=True)
+    c4, c5 = st.columns([1, 1])
+    sep = c4.checkbox("One graph per variable", value=True)
+    per_row_x = c5.selectbox("Graphs per row", [1, 2, 3], index=0, key="explorer_per_row")
     series = [(current, d)] + [(r, simulate(runs[r][0], runs[r][1])["data"]) for r in others]
-    if ys:
-        fig = make_subplots(rows=len(ys) if sep else 1, cols=1, shared_xaxes=True, subplot_titles=ys if sep else None)
-        for n, yk in enumerate(ys):
-            for k, (lbl, dd_) in enumerate(series):
-                fig.add_trace(go.Scatter(x=dd_[xk], y=dd_[yk], mode="lines", name=f"{yk} · {lbl}",
-                                         line=dict(dash=["solid", "dash", "dot", "dashdot"][k % 4])),
-                              row=n + 1 if sep else 1, col=1)
-        fig.update_layout(height=(250 * len(ys) if sep else 450) + 60, hovermode="x unified",
-                          margin=dict(l=40, r=20, t=40, b=40))
-        st.plotly_chart(fig, width="stretch")
+
+    def traces(yk):
+        return [go.Scatter(x=dd_[xk], y=dd_[yk], mode="lines", name=f"{yk} · {lbl}",
+                           line=dict(dash=["solid", "dash", "dot", "dashdot"][k % 4]))
+                for k, (lbl, dd_) in enumerate(series) if yk in dd_ and xk in dd_]
+
+    if ys and sep:
+        chart_grid([(yk, simple_fig(traces(yk), yk, xk, height=320, hovermode="x unified")) for yk in ys],
+                   per_row_x, "explorer")
+    elif ys:
+        chart(simple_fig([tr for yk in ys for tr in traces(yk)], ", ".join(ys), xk, height=480,
+                         hovermode="x unified"), "explorer:all")
     df = pd.DataFrame(d)
     st.download_button("Download full log (CSV)", df.to_csv(index=False).encode(), f"{current}.csv", "text/csv")
     with st.expander("Raw log table"):
@@ -516,7 +586,7 @@ with tabs[2]:
 # ----------------------------------------------------------------------------- trajectory
 
 with tabs[3]:
-    st.plotly_chart(viz.fig_ground_track(d), width="stretch")
+    chart_grid([("ground", viz.fig_ground_track(d)), ("profile", viz.fig_altitude_downrange(d))], 2, "traj")
     kpi_cards([("End point East", f"{d['x'][-1]:.1f} m", None, ACCENT["traj"]),
                ("End point North", f"{d['y'][-1]:.1f} m", None, ACCENT["traj"]),
                ("Distance from pad", f"{math.hypot(d['x'][-1], d['y'][-1]):.1f} m", None, ACCENT["traj"]),
@@ -525,29 +595,26 @@ with tabs[3]:
 # ----------------------------------------------------------------------------- vehicle & model
 
 with tabs[4]:
-    st.plotly_chart(viz.fig_side_view(geom, R["cg"], R["cp03"]), width="stretch")
+    chart(viz.fig_side_view(geom, R["cg"], R["cp03"]), "vehicle:side")
     sc = R["static"]
-    fig = make_subplots(rows=1, cols=3, subplot_titles=["CP station [m] vs Mach", "CN_α [1/rad] vs Mach",
-                                                        "Zero-lift drag vs Mach (sea-level Re)"])
-    fig.add_trace(go.Scatter(x=sc["mach"], y=sc["cp"], name="CP"), 1, 1)
+    cp_fig = simple_fig([go.Scatter(x=sc["mach"], y=sc["cp"], name="CP")], "CP station [m] vs Mach", "Mach")
     for k, v in R["cg"].items():
-        fig.add_hline(y=v, line=dict(dash="dot", color="grey"), annotation_text=k, row=1, col=1)
-    fig.add_trace(go.Scatter(x=sc["mach"], y=sc["cn_alpha"], name="CN_α"), 1, 2)
-    for k in ("total", "friction", "pressure", "base"):
-        fig.add_trace(go.Scatter(x=sc["mach"], y=sc[f"cd_{k}"], name=f"CD {k}"), 1, 3)
-    fig.update_xaxes(title_text="Mach")
-    fig.update_layout(height=360, margin=dict(l=40, r=20, t=40, b=40))
-    st.plotly_chart(fig, width="stretch")
+        cp_fig.add_hline(y=v, line=dict(dash="dot", color="grey"), annotation_text=k)
+    figs = [("cp", cp_fig),
+            ("cna", simple_fig([go.Scatter(x=sc["mach"], y=sc["cn_alpha"], name="CN_α")], "CN_α [1/rad] vs Mach",
+                               "Mach")),
+            ("cd", simple_fig([go.Scatter(x=sc["mach"], y=sc[f"cd_{k}"], name=f"CD {k}")
+                               for k in ("total", "friction", "pressure", "base")],
+                              "Zero-lift drag vs Mach (sea-level Re)", "Mach"))]
     vm = R.get("vortex_map")
     if vm is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=vm["angle_deg"], y=vm["all"], name="all canards deflected"))
-        fig.add_trace(go.Scatter(x=vm["angle_deg"], y=vm["single"], name="canard 0 alone", line=dict(dash="dash")))
-        fig.update_xaxes(title="fin-can angle relative to canards [°]")
-        fig.update_yaxes(title="induced fin roll / canard roll")
-        fig.update_layout(title=f"Canard vortex → fin roll coupling (M {vm['mach']:.1f}, α = 0)", height=320,
-                          margin=dict(l=40, r=20, t=50, b=40), legend=dict(orientation="h", y=-0.3))
-        st.plotly_chart(fig, width="stretch")
+        figs.append(("vortex", simple_fig(
+            [go.Scatter(x=vm["angle_deg"], y=vm["all"], name="all canards deflected"),
+             go.Scatter(x=vm["angle_deg"], y=vm["single"], name="canard 0 alone", line=dict(dash="dash"))],
+            f"Canard vortex → fin roll coupling (M {vm['mach']:.1f}, α = 0)",
+            "fin-can angle relative to canards [°]", "induced fin roll / canard roll",
+            legend=dict(orientation="h", y=-0.3))))
+    chart_grid(figs, 2, "vehicle")
     c1, c2 = st.columns(2)
     with c1:
         section("Build log — sources, overrides, checks")
@@ -583,31 +650,32 @@ with tabs[5]:
                        ("Max AoA, worst", f"{mc.max_aoa_deg.max():.1f}°", None, ACCENT["aero"]),
                        ("Min margin, worst", f"{mc.min_margin_cal.min():.2f} cal", None, ACCENT["aero"]),
                        ("Max body roll, worst", f"{mc.max_body_roll_dps.max():.0f}°/s", None, ACCENT["roll"]),
-                       ("Rail exit, slowest", f"{mc.rail_exit_speed.min():.1f} m/s", None, ACCENT["speed"])])
-            fig = make_subplots(rows=1, cols=3, subplot_titles=["End points (colour = apogee)", "Apogee [m]",
-                                                                "Max roll rate during ascent [°/s]"])
-            fig.add_trace(go.Scatter(x=mc.east_end, y=mc.north_end, mode="markers",
-                                     marker=dict(color=mc.apogee, colorscale="Viridis", showscale=True, size=7,
-                                                 colorbar=dict(x=0.3, len=0.9)),
-                                     text=[f"run {r}" for r in mc.run], name="runs"), 1, 1)
-            fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers", marker=dict(symbol="triangle-up", size=12,
-                                                                             color="#aab4c3"), name="pad"), 1, 1)
-            fig.add_trace(go.Histogram(x=mc.apogee, name="apogee", nbinsx=25), 1, 2)
-            fig.add_trace(go.Histogram(x=mc.max_body_roll_dps, name="body", opacity=0.7), 1, 3)
-            fig.add_trace(go.Histogram(x=mc.max_fincan_roll_dps, name="fin can", opacity=0.7), 1, 3)
-            fig.update_layout(barmode="overlay", height=430, margin=dict(l=40, r=20, t=40, b=40))
-            fig.update_yaxes(scaleanchor="x", scaleratio=1, row=1, col=1)
-            st.plotly_chart(fig, width="stretch")
+                       ("Rail exit, slowest", f"{mc.rail_exit_speed.min():.1f} m/s", None, ACCENT["speed"]),
+                       ("Max tilt, worst", f"{mc.max_tilt_deg.max():.1f}°", "rail exit → apogee", ACCENT["aero"])])
+            ends = simple_fig([go.Scatter(x=mc.east_end, y=mc.north_end, mode="markers", name="runs",
+                                          marker=dict(color=mc.apogee, colorscale="Viridis", showscale=True, size=7),
+                                          text=[f"run {r}" for r in mc.run]),
+                               go.Scatter(x=[0], y=[0], mode="markers", name="pad",
+                                          marker=dict(symbol="triangle-up", size=12, color="#aab4c3"))],
+                              "End points (colour = apogee)", "East [m]", "North [m]", height=430)
+            ends.update_yaxes(scaleanchor="x", scaleratio=1)
+            chart_grid([("ends", ends),
+                        ("apogee", simple_fig([go.Histogram(x=mc.apogee, name="apogee", nbinsx=25)], "Apogee [m]",
+                                              height=430)),
+                        ("roll", simple_fig([go.Histogram(x=mc.max_body_roll_dps, name="body", opacity=0.7),
+                                             go.Histogram(x=mc.max_fincan_roll_dps, name="fin can", opacity=0.7)],
+                                            "Max roll rate during ascent [°/s]", height=430, barmode="overlay"))],
+                       3, "mc")
             num = [c for c in mc.columns if c not in ("run",)]
             c1, c2 = st.columns(2)
             xa = c1.selectbox("Sensitivity: input", [c for c in num if c not in
-                                                     ("apogee", "t_apogee", "east_end", "north_end")], index=0)
-            ya = c2.selectbox("Sensitivity: output", ["apogee", "max_aoa_deg", "max_body_roll_dps",
+                                                     ("apogee", "t_apogee", "east_end", "north_end", "max_tilt_deg")],
+                              index=0)
+            ya = c2.selectbox("Sensitivity: output", ["apogee", "max_tilt_deg", "max_aoa_deg", "max_body_roll_dps",
                                                       "max_fincan_roll_dps", "rail_exit_speed", "east_end",
                                                       "north_end"])
-            st.plotly_chart(go.Figure(go.Scatter(x=mc[xa], y=mc[ya], mode="markers")).update_layout(
-                xaxis_title=xa, yaxis_title=ya, height=350, margin=dict(l=40, r=20, t=20, b=40)),
-                width="stretch")
+            chart(simple_fig([go.Scatter(x=mc[xa], y=mc[ya], mode="markers")], f"{ya} vs {xa}", xa, ya),
+                  "mc:sensitivity")
             st.dataframe(mc, width="stretch", height=260)
             st.download_button("Download Monte Carlo results", mc.to_csv(index=False).encode(), "montecarlo.csv")
 
@@ -634,25 +702,18 @@ with tabs[6]:
                      ("Angle of attack [°]", np.degrees(ours["aoa"]), orc["Angle of attack"]),
                      ("Stability margin [cal]", ours["stability_cal"], orc["Stability margin calibers"]),
                      ("Zenith angle [°]", np.degrees(ours["zenith_angle"]), 90 - orc["Vertical orientation"])]
-            fig = make_subplots(rows=2, cols=3, subplot_titles=[p[0] for p in pairs])
-            for n, (title, y1, y2) in enumerate(pairs):
-                r_, c_ = n // 3 + 1, n % 3 + 1
-                fig.add_trace(go.Scatter(x=s["t_or"], y=y2, name="OpenRocket", line=dict(color="#ff6b4a", width=3),
-                                         opacity=0.5, showlegend=n == 0), r_, c_)
-                fig.add_trace(go.Scatter(x=ours["t"], y=y1, name="rocket_dt", line=dict(color="#4da3ff", width=1.5),
-                                         showlegend=n == 0), r_, c_)
-            fig.update_layout(height=620, margin=dict(l=40, r=20, t=40, b=40), hovermode="x unified")
-            st.plotly_chart(fig, width="stretch")
-            fig = make_subplots(rows=1, cols=2, subplot_titles=["Drag coefficient vs Mach", "CP station vs Mach"])
-            fig.add_trace(go.Scatter(x=a["mach"], y=a["cd_or"], mode="markers", name="OpenRocket CD",
-                                     marker=dict(size=3, color="#ff6b4a")), 1, 1)
-            fig.add_trace(go.Scatter(x=a["mach"], y=a["cd_ours"], mode="markers", name="rocket_dt CD",
-                                     marker=dict(size=3, color="#4da3ff")), 1, 1)
-            fig.add_trace(go.Scatter(x=a["mach"], y=a["cp_or"], mode="markers", name="OpenRocket CP",
-                                     marker=dict(size=3, color="#ff6b4a")), 1, 2)
-            fig.add_trace(go.Scatter(x=a["mach"], y=a["cp_ours"], mode="markers", name="rocket_dt CP",
-                                     marker=dict(size=3, color="#4da3ff")), 1, 2)
-            fig.update_xaxes(title_text="Mach")
-            fig.update_layout(height=380, margin=dict(l=40, r=20, t=40, b=40))
-            st.plotly_chart(fig, width="stretch")
+            chart_grid([(title, simple_fig(
+                [go.Scatter(x=s["t_or"], y=y2, name="OpenRocket", line=dict(color="#ff6b4a", width=3), opacity=0.5),
+                 go.Scatter(x=ours["t"], y=y1, name="rocket_dt", line=dict(color="#4da3ff", width=1.5))],
+                title, "t [s]", height=320, hovermode="x unified")) for title, y1, y2 in pairs], 3, "or")
+
+            def scatter(key, name, colour):
+                return go.Scatter(x=a["mach"], y=a[key], mode="markers", name=name, marker=dict(size=3, color=colour))
+
+            chart_grid([("cd", simple_fig([scatter("cd_or", "OpenRocket CD", "#ff6b4a"),
+                                           scatter("cd_ours", "rocket_dt CD", "#4da3ff")],
+                                          "Drag coefficient vs Mach", "Mach")),
+                        ("cp", simple_fig([scatter("cp_or", "OpenRocket CP", "#ff6b4a"),
+                                           scatter("cp_ours", "rocket_dt CP", "#4da3ff")],
+                                          "CP station vs Mach", "Mach"))], 2, "or_aero")
 

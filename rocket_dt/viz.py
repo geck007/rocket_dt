@@ -6,7 +6,8 @@ import math
 
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
+from rocket_dt import quaternion as Q
 
 COLORS = {"body": "#9aa4b1", "nose": "#d9dde3", "canards": "#ff6b4a", "fincan": "#4da3ff", "fins": "#a78bfa"}
 PALETTE = ["#4da3ff", "#ff8c42", "#3ddc97", "#c084fc", "#ffd166", "#2ec4b6"]
@@ -93,17 +94,13 @@ def _fin_meshes(geom, fincan_angle: float) -> dict[str, tuple]:
     return meshes
 
 
-def _quat_matrix(qw, qx, qy, qz):
-    return np.array([
-        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)],
-        [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)],
-        [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)],
-    ])
+def _attitude(d, i) -> np.ndarray:
+    return Q.to_matrix(np.array([d["qw"][i], d["qx"][i], d["qy"][i], d["qz"][i]]))
 
 
 def _to_world(V_body, d, i, scale, center):
     """Body-frame points (origin at nose tip) -> ENU, about the CG, scaled, placed at center."""
-    R = _quat_matrix(d["qw"][i], d["qx"][i], d["qy"][i], d["qz"][i])
+    R = _attitude(d, i)
     cg = np.array([-d["cg_station"][i], 0.0, 0.0])
     return center + scale * (V_body - cg) @ R.T
 
@@ -221,7 +218,7 @@ def fig_attitude(d, geom, n_frames=120, t_end=None, height=620) -> go.Figure:
         v = vax[i]
         n = np.linalg.norm(v)
         u = v / n * 0.8 * L if n > 1e-6 else np.zeros(3)
-        R = _quat_matrix(d["qw"][i], d["qx"][i], d["qy"][i], d["qz"][i])
+        R = _attitude(d, i)
         ax = R[:, 0] * 0.9 * L
         return [go.Scatter3d(x=[0, u[0]], y=[0, u[1]], z=[0, u[2]], mode="lines",
                              line=dict(color="#3ddc97", width=7), name="velocity rel. air"),
@@ -250,60 +247,47 @@ def fig_attitude(d, geom, n_frames=120, t_end=None, height=620) -> go.Figure:
 # ----------------------------------------------------------------------------- 2D figures
 
 
-def add_event_lines(fig, events, rows=None, t_max=None):
-    for k, v in events.items():
-        if k in EVENT_LABELS and (t_max is None or v <= t_max):
-            fig.add_vline(x=v, line=dict(color=EVENT_LINE, width=1, dash="dot"))
-    return fig
-
-
-def fig_panels(d, events, panels, cols=2, height_per_row=260, t_max=None, cursor=None) -> go.Figure:
-    """panels: list of (title, [(label, y_array), ...])."""
-    rows = math.ceil(len(panels) / cols)
-    fig = make_subplots(rows=rows, cols=cols, shared_xaxes=False, subplot_titles=[p[0] for p in panels],
-                        vertical_spacing=min(0.14, 0.42 / rows), horizontal_spacing=0.07)
+def fig_panel(d, events, title, lines, t_max=None, cursor=None, height=300) -> go.Figure:
+    """One time-history graph: lines is a list of (label, y_array) on the log time base d["t"]."""
     t = d["t"]
     sel = t <= (t_max if t_max is not None else t[-1]) + 1e-9
-    legends = {}
-    for n, (title, lines) in enumerate(panels):
-        r, c = n // cols + 1, n % cols + 1
-        leg = "legend" if n == 0 else f"legend{n + 1}"
-        for k, (label, yv) in enumerate(lines):
-            fig.add_trace(go.Scatter(x=t[sel], y=np.asarray(yv)[sel], name=label, mode="lines",
-                                     line=dict(width=1.6, color=PALETTE[k % len(PALETTE)]),
-                                     legend=leg, showlegend=len(lines) > 1,
-                                     hovertemplate=f"{label}: %{{y:.4g}}<extra></extra>"), row=r, col=c)
-        fig.update_xaxes(title_text="t [s]" if r == rows else None, row=r, col=c)
-        # each panel gets its own legend, inside the top-right corner of its plot area
-        sp = fig.get_subplot(r, c)
-        legends[leg] = dict(x=sp.xaxis.domain[1], y=sp.yaxis.domain[1], xanchor="right", yanchor="top",
-                            bgcolor="rgba(18,24,32,0.65)", bordercolor="rgba(140,150,165,0.3)", borderwidth=1,
-                            font=dict(size=10))
+    fig = go.Figure()
+    for k, (label, yv) in enumerate(lines):
+        fig.add_trace(go.Scatter(x=t[sel], y=np.asarray(yv)[sel], name=label, mode="lines",
+                                 line=dict(width=1.6, color=PALETTE[k % len(PALETTE)]),
+                                 hovertemplate=f"{label}: %{{y:.4g}}<extra></extra>"))
     for k, v in events.items():
         if k in EVENT_LABELS and v <= t[sel][-1] + 1e-9:
             fig.add_vline(x=v, line=dict(color=EVENT_LINE, width=1, dash="dot"))
     if cursor is not None:
         fig.add_vline(x=cursor, line=dict(color="rgba(235,240,248,0.75)", width=1.2, dash="dash"))
-    fig.update_annotations(font_size=12, yshift=4)
-    fig.update_layout(height=height_per_row * rows + 40, margin=dict(l=40, r=20, t=40, b=40),
-                      hovermode="x unified", **legends)
+    fig.update_xaxes(title_text="t [s]")
+    fig.update_layout(title=dict(text=title, font=dict(size=13)), height=height, hovermode="x unified",
+                      showlegend=len(lines) > 1, margin=dict(l=40, r=20, t=40, b=40),
+                      legend=dict(x=1, y=1, xanchor="right", yanchor="top", bgcolor="rgba(18,24,32,0.65)",
+                                  bordercolor="rgba(140,150,165,0.3)", borderwidth=1, font=dict(size=10)))
     return fig
 
 
 def fig_ground_track(d) -> go.Figure:
-    fig = make_subplots(rows=1, cols=2, subplot_titles=["Ground track", "Altitude vs downrange"])
-    fig.add_trace(go.Scatter(x=d["x"], y=d["y"], mode="lines", name="track", line=dict(color="#4da3ff")), 1, 1)
-    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers", marker=dict(symbol="triangle-up", size=12,
-                                                                     color=NEUTRAL), name="pad"), 1, 1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=d["x"], y=d["y"], mode="lines", name="track", line=dict(color="#4da3ff")))
+    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers", marker=dict(symbol="triangle-up", size=12, color=NEUTRAL),
+                             name="pad"))
     fig.add_trace(go.Scatter(x=[d["x"][-1]], y=[d["y"][-1]], mode="markers", marker=dict(size=10, color="#ff6b4a"),
-                             name="end"), 1, 1)
-    fig.add_trace(go.Scatter(x=np.hypot(d["x"], d["y"]), y=d["z"], mode="lines", name="profile",
-                             line=dict(color="#3ddc97")), 1, 2)
-    fig.update_xaxes(title_text="East [m]", row=1, col=1)
-    fig.update_yaxes(title_text="North [m]", scaleanchor="x", scaleratio=1, row=1, col=1)
-    fig.update_xaxes(title_text="Downrange [m]", row=1, col=2)
-    fig.update_yaxes(title_text="Altitude [m]", row=1, col=2)
-    fig.update_layout(height=480, margin=dict(l=40, r=20, t=40, b=40))
+                             name="end"))
+    fig.update_xaxes(title_text="East [m]")
+    fig.update_yaxes(title_text="North [m]", scaleanchor="x", scaleratio=1)
+    fig.update_layout(title="Ground track", height=480, margin=dict(l=40, r=20, t=40, b=40))
+    return fig
+
+
+def fig_altitude_downrange(d) -> go.Figure:
+    fig = go.Figure(go.Scatter(x=np.hypot(d["x"], d["y"]), y=d["z"], mode="lines", name="profile",
+                               line=dict(color="#3ddc97")))
+    fig.update_xaxes(title_text="Downrange [m]")
+    fig.update_yaxes(title_text="Altitude [m]")
+    fig.update_layout(title="Altitude vs downrange", height=480, margin=dict(l=40, r=20, t=40, b=40))
     return fig
 
 

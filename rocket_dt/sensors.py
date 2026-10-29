@@ -99,7 +99,7 @@ def _cross(a, b):
     return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
 
 
-def _rot(roll, pitch, yaw):
+def mount_rotation(roll, pitch, yaw):
     """Rotation matrix (sensor -> body) for a mount rotated by yaw, pitch, roll (degrees)."""
     r, p, y = np.radians([roll, pitch, yaw])
     cx, sx, cy, sy, cz, sz = math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(y), math.sin(y)
@@ -160,7 +160,7 @@ class Imu(_Sensor):
         super().__init__(cfg, sim_dt, rng)
         self.name = cfg.name
         a, g = cfg.accel, cfg.gyro
-        self.C = _rot(*cfg.orientation_deg).T  # body -> sensor
+        self.C = mount_rotation(*cfg.orientation_deg).T  # body -> sensor
         self.a_range = a.range_g * G0
         self.a_lsb = 2 * self.a_range / 2 ** a.bits
         self.a_sigma = a.noise_density_ug_rthz * 1e-6 * G0 * math.sqrt(cfg.rate_hz / 2)

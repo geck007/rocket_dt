@@ -70,12 +70,6 @@ class BodyProfile:
         rm = 0.5 * (self.r[1:] + self.r[:-1])
         return float(np.sum(2 * np.pi * rm * np.hypot(dx, dr)))
 
-    def planform_area(self) -> float:
-        return float(np.trapezoid(2 * self.r, self.x))
-
-    def planform_centroid(self) -> float:
-        a = self.planform_area()
-        return float(np.trapezoid(2 * self.r * self.x, self.x) / a) if a > 0 else float(np.mean(self.x))
 
 
 def sample_body(c: SymmetricComponent, n: int = 201) -> BodyProfile:

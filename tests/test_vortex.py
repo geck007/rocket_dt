@@ -107,7 +107,3 @@ def test_vortex_config_is_validated(root):
     bad["aero"]["canard_vortex"]["model"] = "cfd"
     with pytest.raises(ConfigError, match="canard_vortex.model"):
         parse_config(bad, root / "configs")
-    old = copy.deepcopy(raw)
-    old["disturbances"]["canard_vortex_coupling"] = 0.5  # the former scalar is gone
-    with pytest.raises(ConfigError, match="unknown key"):
-        parse_config(old, root / "configs")

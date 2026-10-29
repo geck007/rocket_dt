@@ -126,4 +126,7 @@ def build_rocket(cfg: Config) -> RocketModel:
 
 
 def build_simulation(cfg: Config, controller: Controller | None = None, actuator=None) -> Simulation:
-    return Simulation(build_rocket(cfg), cfg, controller, actuator)
+    """The rocket plus the controller named in ``cfg.controller`` (unless one is given)."""
+    from rocket_dt.controllers import make_controller
+    rocket = build_rocket(cfg)
+    return Simulation(rocket, cfg, controller or make_controller(cfg, rocket), actuator)
