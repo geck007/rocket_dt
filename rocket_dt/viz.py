@@ -108,9 +108,9 @@ def _to_world(V_body, d, i, scale, center):
 def frame_indices(d, n_frames: int, t_end: float | None = None) -> np.ndarray:
     t = d["t"]
     t_end = t[-1] if t_end is None else min(t_end, t[-1])
-    # denser frames during the short boost phase, where most happens
-    tt = np.unique(np.concatenate([np.linspace(0, min(3.0, t_end), n_frames // 4),
-                                   np.linspace(0, t_end, n_frames - n_frames // 4)]))
+    # evenly spaced in time: every frame plays for the same duration, so uneven spacing would
+    # distort the apparent speed (use the "Boost" span or more frames for detail during the burn)
+    tt = np.linspace(0, t_end, n_frames)
     return np.unique(np.clip(np.searchsorted(t, tt), 0, len(t) - 1))
 
 
