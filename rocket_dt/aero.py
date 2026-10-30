@@ -8,7 +8,9 @@ same lift model rather than from separate empirical damping terms:
 
 * Nose / transitions: slender-body normal force, CN_alpha = 2 (A_aft - A_fore) / A_ref,
   at the Barrowman CP of the component, extended to all angles with Jorgensen's
-  form CN = CN_alpha/2 * sin(2a) cos(a/2) (reverses sign in reverse flow).
+  form CN = CN_alpha/2 * sin(2a) cos(a/2) (reverses sign in reverse flow). A misaligned
+  nose cone (``disturbances.nose_misalignment_deg``) takes its angle of attack about its
+  own axis, so it lifts at zero body angle of attack.
 * Body lift: viscous crossflow term eta C_dc A_plan sin^2(alpha) (Allen & Perkins,
   Jorgensen NASA TR R-474), integrated over axial slices of the whole body, which also
   yields the body's pitch damping. C_dc = 1.2 (``aero.body_crossflow_cd``) is the
@@ -171,7 +173,7 @@ class AeroModel:
                  fin_misalignment: dict[str, list[float]], drag_scale: float = 1.0,
                  canard_vortex: CanardVortexConfig | None = None, canard_hinge: float | None = None,
                  canard_body_carryover: float = 1.0, body_crossflow_cd: float = 1.2,
-                 slice_length: float = 0.025):
+                 nose_misalignment: tuple[float, float] = (0.0, 0.0), slice_length: float = 0.025):
         self.ref_length = reference_length(ork)
         self.ref_area = math.pi * self.ref_length ** 2 / 4.0
         self.length = rocket_length(ork)
@@ -185,14 +187,19 @@ class AeroModel:
         self.max_diameter = 2 * max(float(p.r.max()) for _, p in self.profiles)
 
         # Slender-body (potential) normal force of nose / transitions
-        cna, xcp = [], []
+        # (axis of each: the body axis, or for the nose cone its own axis when it is misaligned)
+        cna, xcp, axes = [], [], []
+        a, b = nose_misalignment
+        nose_axis = np.array([math.cos(a) * math.cos(b), math.cos(a) * math.sin(b), -math.sin(a)])
         for c, p in self.profiles:
             a0, a1 = math.pi * p.r[0] ** 2, math.pi * p.r[-1] ** 2
             if abs(a1 - a0) > 1e-12:
                 cna.append(2.0 * (a1 - a0) / self.ref_area)
                 xcp.append(c.x_top + (c.length * a1 - p.volume()) / (a1 - a0))
+                axes.append(nose_axis if c.kind == "nosecone" else np.array([1.0, 0.0, 0.0]))
         self.body_cna = np.array(cna)
         self.body_cp_station = np.array(xcp)
+        self.body_axis = np.array(axes).reshape(-1, 3)
 
         # Axial slices for crossflow body lift
         xs, rs, dxs = [], [], []
@@ -383,13 +390,19 @@ class AeroModel:
         vmag = np.sqrt(vx * vx + vy * vy + vz * vz)
         cmag = np.sqrt(vy * vy + vz * vz)
         coef = np.empty_like(st)
-        # Jorgensen: CN = CNa/2 sin(2a) cos(a/2); force = -q A CN c_hat = -0.5 rho |v| A CNa cos(a) cos(a/2) c
-        cos_a = vx / np.maximum(vmag[:nb], 1e-9)
+        # Jorgensen: CN = CNa/2 sin(2a) cos(a/2); force = -q A CN c_hat = -0.5 rho |v| A CNa cos(a) cos(a/2) c,
+        # c = the velocity normal to the component's own axis (a misaligned nose lifts at zero body AoA)
+        ax = self.body_axis
+        v_ax = vx * ax[:, 0] + vy[:nb] * ax[:, 1] + vz[:nb] * ax[:, 2]
+        cos_a = v_ax / np.maximum(vmag[:nb], 1e-9)
         cos_half = np.sqrt(np.maximum(0.5 * (1.0 + cos_a), 0.0))
         coef[:nb] = 0.5 * rho * vmag[:nb] * self.ref_area * self.body_cna * cos_a * cos_half
         coef[nb:] = 0.5 * rho * self.crossflow_k * self.slice_area * cmag[nb:]
         fy = -coef * vy
         fz = -coef * vz
+        fy[:nb] += coef[:nb] * v_ax * ax[:, 1]
+        fz[:nb] += coef[:nb] * v_ax * ax[:, 2]
+        force[0] += float(coef[:nb] @ (v_ax * ax[:, 0] - vx))
         force[1] += fy.sum()
         force[2] += fz.sum()
         moment[1] += -float(r_ax @ fz)

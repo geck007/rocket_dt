@@ -148,10 +148,22 @@ with the same name.
 * **Environment:**
   * ISA atmosphere (optional temperature offset), latitude-dependent gravity
   * constant or power-law wind, optional Dryden-type turbulence
-* **Disturbances:**
+* **Disturbances** (build errors; all zero is a perfect rocket):
   * thrust misalignment and offset, thrust and drag scale
-  * lateral CG offset
   * misalignment of each fin; for the canards this is the canard zero offset
+  * CG offset (`cg_offset_mm`): the vehicle's lateral CG offset at liftoff. The off-axis mass is put in the
+    airframe (without motor and fin can) and the motor stays on the axis, so the offset grows as m(0)/m(t)
+    during the burn (≈ +10 %). Thrust, drag and the aerodynamic forces act about the offset CG, and the
+    sensors' lever arms use it.
+  * airframe principal-axis tilt (`inertia_axis_tilt_deg`): products of inertia. Negligible while the body
+    roll stays slow.
+  * nose cone misalignment (`nose_misalignment_deg`): the nose takes its angle of attack about its own axis,
+    so it lifts at zero body angle of attack (CN = 2·δ at the nose CP for small angles).
+  * fin can imbalance: CG off the bearing axis (`fincan_cg_offset_mm`, static) and principal axis tilted
+    from it (`fincan_axis_tilt_deg`, couple). Both act as a product of inertia P that turns with the fin
+    can, P = (1 − m_f/m)·L·m_f·e + (I_t − I_x)·τ, giving a moment Ω²·(e_x × P) on the vehicle at the
+    fin can's spin rate Ω. The CG wobbles by m_f·e/m, and the IMUs feel the airframe's vibration
+    Ω²·m_f·e/m. The Ω′ term and the gyroscopic coupling with the slow body rates are neglected.
 * **Canard servos** (`actuators.py`): `ideal` or `servo`. The servo is a second-order position loop (natural
   frequency, damping, holding stiffness) with stall torque, torque–speed rate limit, deadband, command
   quantisation, backlash and end stops, loaded by the hinge moment.
@@ -224,6 +236,15 @@ Component masses agree to better than 0.001 %. Known differences:
   0–0.3 cal aft of the CG (depending on fin-can roll angle), so this phase is marginally stable; it barely
   changes over body crossflow C_dc 0.4–1.8. Not modelled: wake shielding of the leeward fins, drag crisis of
   the body (crossflow above ≈ 35 m/s).
+* **Build errors** (measured on the baseline):
+  * 1 mm CG offset: max tilt to apogee 45° → 55° without control, and 7.0° → 15.4° with `vertical_hold`.
+    With `vertical_hold` the extra tilt comes at apogee, where canard authority runs out.
+  * 0.3° nose misalignment: 45° → 65° without control, 7.0° → 7.6° with `vertical_hold`.
+  * 0.3° airframe principal-axis tilt: no visible effect.
+  * Fin can imbalance needs the fin can to spin. In `fincan_disturbance_demo.yaml` it reaches only ≈ 1 Hz,
+    where 0.5 mm of static imbalance gives < 0.01 N m. The moment grows with Ω²: it would matter at tens of
+    Hz. The body roll and fin can spin stay 2.5–5× below the pitch natural frequency (0.3–2.5 Hz), so
+    there is no roll resonance there.
 
 ## Open items
 

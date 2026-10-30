@@ -92,6 +92,8 @@ class SensorTruth:
     air_at: Callable[[float], AirState]  # height above the pad -> air
     accel: np.ndarray | None = None  # CG acceleration, ENU, m/s^2 (only when an IMU or GNSS samples)
     omega_dot: np.ndarray | None = None
+    cg_yz: np.ndarray = field(default_factory=lambda: np.zeros(2))  # lateral CG position, body y, z, m
+    airframe_accel: np.ndarray = field(default_factory=lambda: np.zeros(3))  # airframe vs CG (fin-can imbalance), body
 
 
 def _cross(a, b):
@@ -140,8 +142,9 @@ class _Sensor:
         self.period = self.every * sim_dt
         self.log: list[dict] = []
 
-    def point(self, station, yz, cg_station):
-        return np.array([cg_station - station, *yz])
+    def point(self, station, yz, truth: SensorTruth):
+        """Sensor position relative to the CG, body frame."""
+        return np.array([truth.cg_station - station, yz[0] - truth.cg_yz[0], yz[1] - truth.cg_yz[1]])
 
     def advance(self, dt: float, truth: SensorTruth) -> None:
         """Continuous-time sensor dynamics, called every simulation step."""
@@ -177,9 +180,9 @@ class Imu(_Sensor):
 
     def sample(self, truth: SensorTruth) -> ImuSample:
         cfg = self.cfg
-        r = self.point(cfg.station, cfg.offset_yz_m, truth.cg_station)
+        r = self.point(cfg.station, cfg.offset_yz_m, truth)
         w, wd = truth.omega, truth.omega_dot
-        a_point = truth.accel + truth.R @ (_cross(wd, r) + _cross(w, _cross(w, r)))
+        a_point = truth.accel + truth.R @ (_cross(wd, r) + _cross(w, _cross(w, r)) + truth.airframe_accel)
         f_s = self.C @ (truth.R.T @ (a_point + np.array([0.0, 0.0, truth.g])))
         w_s = self.C @ w
         acc = self.a_E @ f_s + self.a_b + self.a_gm.step(self.period) + self.rng.normal(0.0, self.a_sigma, 3)
@@ -210,7 +213,7 @@ class Barometer(_Sensor):
         self.p_lag = None
 
     def _true(self, truth: SensorTruth):
-        r = self.point(self.cfg.station, (0.0, 0.0), truth.cg_station)
+        r = self.point(self.cfg.station, (0.0, 0.0), truth)
         h = truth.position[2] + (truth.R @ r)[2]
         air = truth.air_at(h)
         return air, h, air.pressure + self.cfg.static_error_coeff * truth.dynamic_pressure
@@ -249,9 +252,9 @@ class Gnss(_Sensor):
 
     def sample(self, truth: SensorTruth) -> GnssSample:
         c = self.cfg
-        r = truth.R @ self.point(c.station, (0.0, 0.0), truth.cg_station)
+        r = truth.R @ self.point(c.station, (0.0, 0.0), truth)
         pos = truth.position + r
-        vel = truth.velocity + truth.R @ _cross(truth.omega, self.point(c.station, (0.0, 0.0), truth.cg_station))
+        vel = truth.velocity + truth.R @ _cross(truth.omega, self.point(c.station, (0.0, 0.0), truth))
         if np.linalg.norm(truth.accel) > c.max_accel_g * G0:
             self.locked, self.t_below = False, 0.0
         elif not self.locked:

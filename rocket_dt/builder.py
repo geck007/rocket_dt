@@ -96,15 +96,39 @@ def build_rocket(cfg: Config) -> RocketModel:
                      f"CG station {-fincan.cg[0]:.3f} m, Ixx {fincan.inertia[0, 0]:.5f} kg m^2; "
                      f"components: {', '.join(r.path for r in fincan_roots)}")
 
-    mass = MassModel(body, fincan, motor, extra_cg_offset=tuple(cfg.disturbances.cg_offset_m))
+    dd = cfg.disturbances
+    # cg_offset_mm is the offset of the assembled vehicle at liftoff (what a balance measures); it belongs to
+    # the airframe, so the airframe's own offset is larger by m_liftoff / m_airframe
+    m_liftoff = body.mass + (fincan.mass if fincan else 0.0) + sum(e.mass for e in motor.mass_elements(0.0))
+    mass = MassModel(body, fincan, motor,
+                     body_cg_offset=tuple(1e-3 * v * m_liftoff / body.mass for v in dd.cg_offset_mm),
+                     body_axis_tilt=tuple(math.radians(v) for v in dd.inertia_axis_tilt_deg))
     m0 = mass.at(0.0)
     notes.append(f"MASS dry airframe {body.mass + (fincan.mass if fincan else 0):.3f} kg, liftoff {m0.mass:.3f} kg, "
                  f"CG station {m0.cg_station:.4f} m, Ixx {m0.inertia[0, 0]:.4f}, Iyy {m0.inertia[1, 1]:.4f} kg m^2")
+    if any(dd.cg_offset_mm):
+        m1 = mass.at(motor.burn_time + 1.0)
+        notes.append(f"BUILD vehicle CG offset {1e3 * np.linalg.norm(m0.cg[1:]):.2f} mm at liftoff, "
+                     f"{1e3 * np.linalg.norm(m1.cg[1:]):.2f} mm after burnout (airframe without motor and fin can: "
+                     f"{1e3 * np.linalg.norm(m0.cg[1:]) * m_liftoff / body.mass:.2f} mm)")
+
+    # fin-can imbalance, in the fin-can frame (it turns with the fin can)
+    imb_static = np.zeros(2)
+    imb_couple = np.zeros(2)
+    if fincan is not None:
+        imb_static = fincan.mass * 1e-3 * np.array(dd.fincan_cg_offset_mm)  # kg m
+        imb_couple = (fincan.inertia[1, 1] - fincan.inertia[0, 0]) * np.radians(dd.fincan_axis_tilt_deg)  # kg m^2
+        if imb_static.any() or imb_couple.any():
+            notes.append(f"BUILD fin-can imbalance: static {1e6 * np.linalg.norm(imb_static):.0f} g mm, "
+                         f"couple {1e6 * np.linalg.norm(imb_couple):.0f} g mm^2")
+    elif any(dd.fincan_cg_offset_mm) or any(dd.fincan_axis_tilt_deg):
+        raise ConfigError("disturbances.fincan_*: the rocket has no fin can")
 
     aero = AeroModel(ork, {r.path for r in fincan_roots}, cfg.rocket.canards,
                      cfg.disturbances.fin_misalignment_deg, cfg.disturbances.drag_scale,
                      cfg.aero.canard_vortex, cfg.actuators.canards.hinge_from_root_le,
-                     cfg.aero.canard_body_carryover, cfg.aero.body_crossflow_cd)
+                     cfg.aero.canard_body_carryover, cfg.aero.body_crossflow_cd,
+                     tuple(math.radians(v) for v in cfg.disturbances.nose_misalignment_deg))
     cna, cp = aero.static_cp(0.3)
     notes.append(f"AERO ref diameter {aero.ref_length:.4f} m, length {aero.length:.4f} m; at M 0.3: "
                  f"CN_alpha {cna:.2f}/rad, CP station {cp:.4f} m, static margin "
@@ -123,7 +147,10 @@ def build_rocket(cfg: Config) -> RocketModel:
     return RocketModel(name=ork.name, mass=mass, aero=aero, motor=motor,
                        fincan_free=bool(fincan is not None and fc.enabled),
                        bearing=fc.bearing if fc else None, thrust_direction=thrust_dir, thrust_offset=thrust_off,
-                       length=rocket_length(ork), notes=notes)
+                       length=rocket_length(ork), notes=notes,
+                       fincan_mass=fincan.mass if fincan is not None else 0.0,
+                       fincan_station=-float(fincan.cg[0]) if fincan is not None else 0.0,
+                       fincan_imbalance_static=imb_static, fincan_imbalance_couple=imb_couple)
 
 
 def build_simulation(cfg: Config, controller: Controller | None = None, actuator=None) -> Simulation:

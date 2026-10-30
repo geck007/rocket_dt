@@ -107,10 +107,17 @@ sensors:
     max_accel_g: 4.0
     reacquire_s: 1.0
 
-disturbances:
+disturbances:                           # build errors; all zero = a perfect rocket. [y, z] pairs are in body
+                                        # axes; angles are rotations about body y (pitch) and z (yaw)
   thrust_misalignment_deg: [0.0, 0.0]
   thrust_offset_m: [0.0, 0.0]
   fin_misalignment_deg: {}
+  cg_offset_mm: [0.0, 0.0]              # vehicle CG off the axis at liftoff; the off-axis mass is in the airframe,
+                                        # so the offset grows as the (centred) propellant burns away
+  inertia_axis_tilt_deg: [0.0, 0.0]     # airframe principal axis tilted from the body axis (products of inertia)
+  nose_misalignment_deg: [0.0, 0.0]     # nose cone axis tilted from the body axis: lift at zero AoA
+  fincan_cg_offset_mm: [0.0, 0.0]       # fin can CG off the bearing axis (static imbalance; turns with the can)
+  fincan_axis_tilt_deg: [0.0, 0.0]      # fin can principal axis tilted from the bearing axis (couple imbalance)
 
 controller:
   type: none                            # a name from rocket_dt/controllers/__init__.py (see vertical_hold.yaml)
@@ -137,3 +144,13 @@ montecarlo:
     aero.canard_body_carryover: {dist: uniform, low: 0.0, high: 1.0}
     disturbances.fin_misalignment_deg.motor case transition/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.2, size: 4}
     disturbances.fin_misalignment_deg.canards bay body/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.1, size: 4}
+    disturbances.cg_offset_mm.0: {dist: normal, mean: 0.0, sigma: 1.0}
+    disturbances.cg_offset_mm.1: {dist: normal, mean: 0.0, sigma: 1.0}
+    disturbances.inertia_axis_tilt_deg.0: {dist: normal, mean: 0.0, sigma: 0.1}
+    disturbances.inertia_axis_tilt_deg.1: {dist: normal, mean: 0.0, sigma: 0.1}
+    disturbances.nose_misalignment_deg.0: {dist: normal, mean: 0.0, sigma: 0.15}
+    disturbances.nose_misalignment_deg.1: {dist: normal, mean: 0.0, sigma: 0.15}
+    disturbances.fincan_cg_offset_mm.0: {dist: normal, mean: 0.0, sigma: 0.3}
+    disturbances.fincan_cg_offset_mm.1: {dist: normal, mean: 0.0, sigma: 0.3}
+    disturbances.fincan_axis_tilt_deg.0: {dist: normal, mean: 0.0, sigma: 0.2}
+    disturbances.fincan_axis_tilt_deg.1: {dist: normal, mean: 0.0, sigma: 0.2}

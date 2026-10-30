@@ -112,8 +112,13 @@ class DisturbanceConfig:
     thrust_offset_m: list[float] = field(default_factory=lambda: [0.0, 0.0])  # nozzle offset in body y, z
     thrust_scale: float = 1.0
     drag_scale: float = 1.0
-    cg_offset_m: list[float] = field(default_factory=lambda: [0.0, 0.0])  # lateral CG offset, body y, z
     fin_misalignment_deg: dict = field(default_factory=dict)  # ork path -> per-fin cant error list
+    # build errors that put the CG or the CP off the axis (all zero = a perfect rocket)
+    cg_offset_mm: list[float] = field(default_factory=lambda: [0.0, 0.0])  # vehicle CG at liftoff, body y, z (grows in the burn)
+    inertia_axis_tilt_deg: list[float] = field(default_factory=lambda: [0.0, 0.0])  # airframe principal axis, about y, z
+    nose_misalignment_deg: list[float] = field(default_factory=lambda: [0.0, 0.0])  # nose cone axis, about body y, z
+    fincan_cg_offset_mm: list[float] = field(default_factory=lambda: [0.0, 0.0])  # fin can CG from the bearing axis
+    fincan_axis_tilt_deg: list[float] = field(default_factory=lambda: [0.0, 0.0])  # fin can principal axis tilt
 
 
 @dataclass
@@ -433,7 +438,8 @@ def _validate(cfg: Config) -> None:
     for p in (cfg.rocket.ork, cfg.motor.burn_data, cfg.motor.grains, cfg.motor.eng):
         if not p.exists():
             raise ConfigError(f"File not found: {p}")
-    for name in ("thrust_misalignment_deg", "thrust_offset_m", "cg_offset_m"):
+    for name in ("thrust_misalignment_deg", "thrust_offset_m", "cg_offset_mm", "inertia_axis_tilt_deg",
+                 "nose_misalignment_deg", "fincan_cg_offset_mm", "fincan_axis_tilt_deg"):
         if len(getattr(cfg.disturbances, name)) != 2:
             raise ConfigError(f"disturbances.{name} must have 2 entries")
 

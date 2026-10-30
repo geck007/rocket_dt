@@ -206,8 +206,20 @@ Settings and tools available for testing a controller:
   and backlash (0.2°) are on the order of the deflections roll control needs.
 * **State knowledge:** `inp.truth` or the sensors.
 * **Launch conditions:** rail tilt (`launch.angle_from_vertical_deg`), wind and turbulence.
-* **Build errors:** `configs/fincan_disturbance_demo.yaml` has errors that make the body roll; fin
-  misalignment, thrust misalignment and CG offset are under `disturbances`.
+* **Build errors:** all under `disturbances` in the config and in the dashboard sidebar. Each is zero (a
+  perfect rocket) by default:
+  * thrust misalignment and offset
+  * fin and canard misalignment
+  * CG offset in mm
+  * nose cone misalignment
+  * airframe principal-axis tilt
+  * fin can imbalance (CG offset and axis tilt)
+
+  `configs/fincan_disturbance_demo.yaml` has errors that make the body roll. Suggested progression:
+  1. Get the controller working on the perfect rocket.
+  2. Add one error at a time and check the tilt charts. A controller without integral action settles at a
+     constant tilt.
+  3. Run the Monte Carlo, which disperses all of the errors at once.
 * **Monte Carlo:** `scripts/montecarlo.py` or the dashboard tab; reports the spread and worst case of
   `max_tilt_deg`, apogee and roll.
 * **Estimate vs truth:** *Telemetry → Controller* in the dashboard.

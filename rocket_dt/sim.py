@@ -49,6 +49,7 @@ from rocket_dt.sensors import SensorSuite, SensorTruth
 from rocket_dt.wind import Wind
 
 E_X = np.array([1.0, 0.0, 0.0])
+_ZERO2, _ZERO3 = np.zeros(2), np.zeros(3)
 
 
 def _cross(a, b):
@@ -69,6 +70,30 @@ class RocketModel:
     thrust_offset: np.ndarray  # lateral nozzle offset (0, y, z), body frame
     length: float
     notes: list[str] = field(default_factory=list)
+    fincan_mass: float = 0.0
+    fincan_station: float = 0.0  # CG station of the fin can
+    fincan_imbalance_static: np.ndarray = field(default_factory=lambda: np.zeros(2))  # m_f e, kg m, fin-can frame
+    fincan_imbalance_couple: np.ndarray = field(default_factory=lambda: np.zeros(2))  # (I_t - I_x) tilt, kg m^2
+
+    def fincan_imbalance(self, phi: float, omega_rel: float, mass: float, cg_station: float):
+        """Effects of an unbalanced fin can at fin-can angle phi spinning at omega_rel relative to the body.
+
+        Returns (lateral shift of the vehicle CG, (y, z); moment on the vehicle about its CG; acceleration of
+        the airframe relative to the vehicle CG), body frame. The static imbalance m_f e (fin-can CG off the
+        bearing axis) and the couple imbalance (I_t - I_x) tau (principal axis tilted by tau) act as rotating
+        products of inertia P(phi); the bearing reaction on the airframe is Omega^2 e_x x P. The Omega' term
+        and the gyroscopic coupling with the slow body rates are neglected (Omega >> |omega|)."""
+        s, c = self.fincan_imbalance_static, self.fincan_imbalance_couple
+        if not (s.any() or c.any()):
+            return _ZERO2, _ZERO3, _ZERO3
+        cp, sp = math.cos(phi), math.sin(phi)
+        s_b = np.array([cp * s[0] - sp * s[1], sp * s[0] + cp * s[1]])
+        c_b = np.array([cp * c[0] - sp * c[1], sp * c[0] + cp * c[1]])
+        arm = (1.0 - self.fincan_mass / mass) * (cg_station - self.fincan_station)  # reduced mass x lever arm
+        p_b = arm * s_b + c_b
+        w2 = omega_rel * omega_rel
+        return (s_b / mass, np.array([0.0, -w2 * p_b[1], w2 * p_b[0]]),
+                np.array([0.0, w2 * s_b[0] / mass, w2 * s_b[1] / mass]))
 
     def bearing_torque(self, omega_rel: float) -> float:
         """Friction torque acting on the fin can (opposes relative rotation)."""
@@ -170,9 +195,10 @@ class Simulation:
         self._hinge = aero.hinge_moment
         thrust = rk.motor.thrust(t)
         f_thrust = thrust * rk.thrust_direction
-        r_noz = np.array([cg_st - rk.motor.nozzle_station, 0.0, 0.0]) + rk.thrust_offset - np.array([0.0, *ms.cg[1:]])
-        cg_lat = np.array([0.0, *ms.cg[1:]])
-        moment = aero.moment - _cross(cg_lat, aero.force) + _cross(r_noz, f_thrust)
+        shift, m_imb, _ = rk.fincan_imbalance(y[13], y[14], ms.mass, cg_st)
+        cg_lat = np.array([0.0, ms.cg[1] + shift[0], ms.cg[2] + shift[1]])
+        r_noz = np.array([cg_st - rk.motor.nozzle_station, 0.0, 0.0]) + rk.thrust_offset - cg_lat
+        moment = aero.moment - _cross(cg_lat, aero.force) + _cross(r_noz, f_thrust) + m_imb
         return R, ms, air, v_b, aero, thrust, aero.force + f_thrust, moment
 
     def deriv_flight(self, t, y, delta):
@@ -347,9 +373,12 @@ class Simulation:
         R = Q.to_matrix(y[6:10])
         air = self._air(y[2])
         va = float(np.linalg.norm(y[3:6] - self.wind.at(y[2])))
+        ms = self.rocket.mass.at(t)
+        shift, _, a_frame = self.rocket.fincan_imbalance(y[13], y[14], ms.mass, ms.cg_station)
         truth = SensorTruth(t=t, position=y[0:3].copy(), velocity=y[3:6].copy(), R=R, omega=y[10:13].copy(),
-                            cg_station=self.rocket.mass.at(t).cg_station, g=self.g,
-                            dynamic_pressure=0.5 * air.density * va * va, air_at=self._air)
+                            cg_station=ms.cg_station, g=self.g,
+                            dynamic_pressure=0.5 * air.density * va * va, air_at=self._air,
+                            cg_yz=ms.cg[1:] + shift, airframe_accel=a_frame)
         if need_accel:
             dy = (self.deriv_rail if phase == "rail" else self.deriv_flight)(t, y, delta)
             truth.accel, truth.omega_dot = dy[3:6], dy[10:13]
@@ -377,6 +406,7 @@ class Simulation:
         else:
             R, ms, air, v_b, aero, thrust, F_b, _ = self._forces(t, y, delta, diagnostics=True)
             acc_axial = F_b[0] / ms.mass
+        shift, m_imb, _ = rk.fincan_imbalance(y[13], y[14], ms.mass, ms.cg_station)
         d = aero.diag or {}
         body_x = R[:, 0]
         cp = d.get("cp_station", float("nan"))
@@ -396,6 +426,8 @@ class Simulation:
             "heading": math.atan2(body_x[0], body_x[1]),
             "roll_angle": roll_angle,
             "mass": ms.mass, "cg_station": ms.cg_station, "Ixx": ms.inertia[0, 0], "Iyy": ms.inertia[1, 1],
+            "cg_y": ms.cg[1] + shift[0], "cg_z": ms.cg[2] + shift[1],
+            "fincan_imbalance_moment": float(math.hypot(m_imb[1], m_imb[2])),
             "thrust": thrust, "accel_axial": acc_axial,
             "mach": d.get("mach", 0.0), "aoa": d.get("aoa", 0.0), "q_dyn": d.get("q", 0.0),
             "reynolds": d.get("reynolds", 0.0),

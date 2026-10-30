@@ -255,6 +255,23 @@ with st.sidebar.form("scenario"):
              st.number_input, step=0.05, format="%.3f")
         knob("Thrust scale", "disturbances.thrust_scale", dd.thrust_scale, st.number_input, step=0.01)
         knob("Drag scale", "disturbances.drag_scale", dd.drag_scale, st.number_input, step=0.01)
+        st.caption("Build errors that put the CG or CP off the axis (pairs: body y / z, or pitch / yaw)")
+        for label, key, step, fmt, hlp in (
+                ("CG offset", "cg_offset_mm", 0.5, "%.2f",
+                 "mm, whole rocket at liftoff (as measured on a balance); grows as the propellant burns"),
+                ("Airframe inertia axis tilt", "inertia_axis_tilt_deg", 0.05, "%.3f", "°, principal axis vs body axis"),
+                ("Nose cone misalignment", "nose_misalignment_deg", 0.05, "%.3f", "°, nose lifts at zero AoA"),
+                ("Fin can CG offset", "fincan_cg_offset_mm", 0.1, "%.2f", "mm from the bearing axis, spins with the can"),
+                ("Fin can axis tilt", "fincan_axis_tilt_deg", 0.05, "%.3f", "°, principal axis vs bearing axis")):
+            unit = "mm" if key.endswith("_mm") else "°"
+            y_lab, z_lab = ("y", "z") if unit == "mm" else ("pitch", "yaw")
+            k1, k2 = st.columns(2)
+            with k1:
+                knob(f"{label} {y_lab} [{unit}]", f"disturbances.{key}.0", float(getattr(dd, key)[0]), st.number_input,
+                     step=step, format=fmt, help=hlp)
+            with k2:
+                knob(f"{label} {z_lab} [{unit}]", f"disturbances.{key}.1", float(getattr(dd, key)[1]), st.number_input,
+                     step=step, format=fmt, help=hlp)
         for fp in fin_set_paths(str(c.rocket.ork)):
             cur = dd.fin_misalignment_deg.get(fp)
             txt = st.text_input(f"Fin misalignment [°] — {fp}", value=", ".join(f"{v:g}" for v in cur) if cur else "",

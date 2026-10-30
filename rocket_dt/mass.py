@@ -168,7 +168,19 @@ class MassState:
 class MassModel:
     """Tabulated mass properties versus time, linearly interpolated."""
 
-    def __init__(self, static_body: MassElement, fincan: MassElement | None, motor, extra_cg_offset=(0.0, 0.0)):
+    def __init__(self, static_body: MassElement, fincan: MassElement | None, motor,
+                 body_cg_offset=(0.0, 0.0), body_axis_tilt=(0.0, 0.0)):
+        """body_cg_offset (m, body y, z) and body_axis_tilt (rad, about body y, z) are build errors of the
+        airframe (``static_body``). The motor stays on the axis, so the offset of the whole vehicle's CG,
+        body_cg_offset * m_body / m(t), grows as the propellant burns; both errors also produce
+        products of inertia."""
+        a, b = body_axis_tilt
+        ca, sa, cb, sb = math.cos(a), math.sin(a), math.cos(b), math.sin(b)
+        rot = np.array([[ca, 0.0, sa], [0.0, 1.0, 0.0], [-sa, 0.0, ca]]) @ np.array([[cb, -sb, 0.0], [sb, cb, 0.0],
+                                                                                      [0.0, 0.0, 1.0]])
+        static_body = MassElement(static_body.name, static_body.mass,
+                                  static_body.cg + np.array([0.0, *body_cg_offset]),
+                                  rot @ static_body.inertia @ rot.T)
         self.static_body = static_body
         self.fincan = fincan
         self.motor = motor
@@ -178,14 +190,13 @@ class MassModel:
         self._m = np.empty(n)
         self._cg = np.empty((n, 3))
         self._I = np.empty((n, 3, 3))
-        offset = np.array([0.0, *extra_cg_offset])
         for k, tk in enumerate(t):
             parts = [static_body, *motor.mass_elements(tk)]
             if fincan is not None:
                 parts.append(fincan)
             tot = combine(parts)
             self._m[k] = tot.mass
-            self._cg[k] = tot.cg + offset
+            self._cg[k] = tot.cg
             self._I[k] = tot.inertia
         dt = np.diff(t)
         self._mdot = np.append(np.diff(self._m) / dt, 0.0)
