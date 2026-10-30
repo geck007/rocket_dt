@@ -93,6 +93,10 @@ backlash is enough to steer it). With the example controller it stays within abo
   Pick the graphs to show in each group, choose how many graphs go in a row, set a time window and a cursor,
   and see the full state at the cursor. The *Controller* group plots everything the controller reports
   (`telemetry()`) and its estimates against the truth. Full-rate sensor logs download as CSV.
+  *Tilt of axis from vertical* (Trajectory and Attitude groups) is the angle between the rocket's axis and
+  the local vertical, split into its East and North leans (`zenith_angle`, `tilt_east`, `tilt_north`).
+  Use it, not the angle of attack, to judge pitch/yaw control: the AoA is measured from the relative
+  wind and goes to zero once the rocket weathercocks, however far it leans.
 * **Explorer:** any logged variable against any other, one graph per variable or overlaid, with runs
   from the history overlaid; CSV download.
 * **Trajectory:** ground track, altitude vs downrange.

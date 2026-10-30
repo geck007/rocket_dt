@@ -391,6 +391,8 @@ class Simulation:
             "p": y[10], "q": y[11], "r": y[12],
             "fincan_angle_rel": y[13], "fincan_rate_rel": y[14], "fincan_rate_abs": y[10] + y[14],
             "zenith_angle": math.acos(max(-1.0, min(1.0, body_x[2]))),
+            # lean of the axis from vertical in the East-Up and North-Up planes (+ = nose towards East / North)
+            "tilt_east": math.atan2(body_x[0], body_x[2]), "tilt_north": math.atan2(body_x[1], body_x[2]),
             "heading": math.atan2(body_x[0], body_x[1]),
             "roll_angle": roll_angle,
             "mass": ms.mass, "cg_station": ms.cg_station, "Ixx": ms.inertia[0, 0], "Iyy": ms.inertia[1, 1],

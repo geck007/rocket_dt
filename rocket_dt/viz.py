@@ -151,7 +151,8 @@ def _anim_controls(frame_names, duration=60):
 
 def _status(d, i):
     return (f"t = {d['t'][i]:6.2f} s   alt {d['z'][i]:7.1f} m   speed {d['speed'][i]:6.1f} m/s   "
-            f"Mach {d['mach'][i]:.2f}   AoA {math.degrees(d['aoa'][i]):5.1f}°   "
+            f"Mach {d['mach'][i]:.2f}   tilt {math.degrees(d['zenith_angle'][i]):5.1f}°   "
+            f"AoA {math.degrees(d['aoa'][i]):5.1f}°   "
             f"roll body {math.degrees(d['p'][i]):7.1f}°/s   fin can {math.degrees(d['fincan_rate_abs'][i]):7.1f}°/s")
 
 

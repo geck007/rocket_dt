@@ -382,8 +382,9 @@ kpi_cards([
     ("Rail exit", f"{ev.get('rail_exit_speed', float('nan')):.1f} m/s",
      f"t = {ev.get('rail_exit', float('nan')):.3f} s", ACCENT["speed"]),
     ("Max AoA", f"{np.degrees(d['aoa'][: i_apo + 1][fast].max()):.2f}°", "airspeed > 20 m/s", ACCENT["aero"]),
-    ("Max tilt", f"{np.degrees(d['zenith_angle'][after_rail].max()):.1f}°", "from vertical, rail exit → apogee",
-     ACCENT["aero"]),
+    ("Max tilt", f"{np.degrees(d['zenith_angle'][after_rail].max()):.1f}°",
+     "axis from vertical, rail exit → apogee", ACCENT["aero"]),
+    ("Tilt at apogee", f"{np.degrees(d['zenith_angle'][i_apo]):.1f}°", "axis from vertical", ACCENT["aero"]),
     ("Min margin", f"{min_margin:.2f} cal", "ascent", ACCENT["aero"]),
     ("Max roll, body", f"{np.degrees(np.abs(d['p']).max()):.0f}°/s", None, ACCENT["roll"]),
     ("Max roll, fin can", f"{np.degrees(np.abs(d['fincan_rate_abs']).max()):.0f}°/s", "inertial", ACCENT["roll"]),
@@ -424,8 +425,11 @@ with tabs[0]:
 
 # ----------------------------------------------------------------------------- telemetry
 
+TILT = ("Tilt of axis from vertical [°]", [("total", d["zenith_angle"] * DEG), ("East", d["tilt_east"] * DEG),
+                                           ("North", d["tilt_north"] * DEG)])
 GROUPS = {
     "Trajectory": [
+        TILT,
         ("Altitude AGL [m]", [("z", d["z"])]),
         ("Speed [m/s]", [("inertial", d["speed"]), ("airspeed", d["airspeed"]), ("vertical", d["vz"])]),
         ("Axial acceleration [g]", [("a_x", d["accel_axial"] / 9.81)]),
@@ -435,6 +439,7 @@ GROUPS = {
     ],
     "Aerodynamics": [
         ("Angle of attack [°]", [("AoA", d["aoa"] * DEG)]),
+        ("Tilt from vertical vs angle of attack [°]", [("tilt", d["zenith_angle"] * DEG), ("AoA", d["aoa"] * DEG)]),
         ("Drag coefficient (zero-lift)", [("total", d["cd"]), ("friction", d["cd_friction"]),
                                           ("pressure", d["cd_pressure"]), ("base", d["cd_base"])]),
         ("Stability margin [cal]", [("margin", d["stability_cal"])]),
@@ -443,7 +448,7 @@ GROUPS = {
         ("Reynolds number [×10⁶]", [("Re", d["reynolds"] / 1e6)]),
     ],
     "Attitude & rates": [
-        ("Zenith angle of axis [°]", [("zenith", d["zenith_angle"] * DEG)]),
+        TILT,
         ("Heading of axis [°]", [("heading", d["heading"] * DEG)]),
         ("Pitch / yaw rates [°/s]", [("q", d["q"] * DEG), ("r", d["r"] * DEG)]),
         ("Body roll rate [°/s]", [("p", d["p"] * DEG)]),
