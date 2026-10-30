@@ -52,6 +52,10 @@ aero:
   # canard really puts on the body: 1 = sealed root, 0 = large hinge gap. PLACEHOLDER until wind tunnel /
   # flight data; it sets the canard pitch/yaw authority within about +-20 % (no effect on roll).
   canard_body_carryover: 0.5
+  # Crossflow drag coefficient of the body cross-section at high angle of attack (sets the broadside force).
+  # 1.2 = cylinder below the drag crisis. The broadside phase after apogee is at ~12 m/s (crossflow Reynolds
+  # number ~1e5, subcritical); the crisis (Cd 0.3-0.5) starts near 3e5, i.e. ~35 m/s of crossflow.
+  body_crossflow_cd: 1.2
 
 # Canard servos (one per canard) - all values are PLACEHOLDERS until bench tests of the real servo.
 actuators:

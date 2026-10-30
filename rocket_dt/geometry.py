@@ -91,6 +91,7 @@ class FinPlanform:
     mac_span: float  # y of the MAC (= area centroid span position)
     midchord_sweep: float  # rad
     le_sweep: float  # rad
+    te_sweep: float  # rad
     y: np.ndarray  # spanwise strip centres
     chord: np.ndarray  # chord at strip centres
     dy: np.ndarray  # strip widths
@@ -128,6 +129,7 @@ def fin_planform(points: list[tuple[float, float]], n_strips: int = 24) -> FinPl
     tip_mid = 0.5 * (le[-1] + te[-1])
     midchord_sweep = math.atan2(tip_mid - root_mid, span)
     le_sweep = math.atan2(le[-1] - le[0], span)
+    te_sweep = math.atan2(te[-1] - te[0], span)
 
     # Strip discretisation for roll and local-flow calculations
     edges = np.linspace(0.0, span, n_strips + 1)
@@ -147,5 +149,5 @@ def fin_planform(points: list[tuple[float, float]], n_strips: int = 24) -> FinPl
     sxy = float(np.sum(a * (xc_strip - cx) * (yc - cy)))
 
     return FinPlanform(area=area, span=span, root_chord=float(c[0]), mac_length=mac_length, mac_lead=mac_lead,
-                       mac_span=mac_span, midchord_sweep=midchord_sweep, le_sweep=le_sweep, y=yc, chord=chord,
-                       dy=dy, centroid_x=cx, second_moments=(sxx, syy, sxy), le=le_strip)
+                       mac_span=mac_span, midchord_sweep=midchord_sweep, le_sweep=le_sweep, te_sweep=te_sweep,
+                       y=yc, chord=chord, dy=dy, centroid_x=cx, second_moments=(sxx, syy, sxy), le=le_strip)

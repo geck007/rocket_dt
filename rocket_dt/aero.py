@@ -9,8 +9,12 @@ same lift model rather than from separate empirical damping terms:
 * Nose / transitions: slender-body normal force, CN_alpha = 2 (A_aft - A_fore) / A_ref,
   at the Barrowman CP of the component, extended to all angles with Jorgensen's
   form CN = CN_alpha/2 * sin(2a) cos(a/2) (reverses sign in reverse flow).
-* Body lift: crossflow term K * A_plan * sin^2(alpha) (K = 1.1), integrated over
-  axial slices of the whole body, which also yields the body's pitch damping.
+* Body lift: viscous crossflow term eta C_dc A_plan sin^2(alpha) (Allen & Perkins,
+  Jorgensen NASA TR R-474), integrated over axial slices of the whole body, which also
+  yields the body's pitch damping. C_dc = 1.2 (``aero.body_crossflow_cd``) is the
+  subcritical 2-D cylinder value; eta(L/D) the finite-length factor (0.72 at L/D = 15).
+  OpenRocket uses K = 1.1 in place of eta C_dc, which overstates the broadside force
+  by about 25 % and puts the broadside CP too far forward.
 * Fins (incl. canards): per-fin Diederich lift slope at the MAC quarter chord. Each
   fin is split into spanwise strips so roll rate produces a linearly varying local
   angle of attack (roll damping) and per-fin deflections produce roll (and pitch/yaw)
@@ -20,9 +24,14 @@ same lift model rather than from separate empirical damping terms:
   fin-fin terms); the roll-rate term by the slender-body roll-damping factor. A deflected
   canard also loads the body (carry-over k_B(W), times ``aero.canard_body_carryover``
   for the hinge gap); that force acts at the canard station and carries no roll moment.
-  Beyond small angles each strip follows CN = CN_alpha sin(a)cos(a) +
-  C_dc (A_fin/A_ref) sin(a)|sin(a)| (linear lift + flat-plate crossflow), so the
-  fins keep producing a physically sized restoring force up to 90 deg instead of
+  Beyond small angles each strip carries attached-flow lift plus flat-plate crossflow,
+      CN = CN_alpha sin(a_lin) cos(a) + C_dc,fin (A_fin/A_ref) sin(a)|sin(a)|,
+  on the dynamic pressure of the flow in the strip's chordwise plane (spanwise flow
+  does not load a fin: independence principle). a is the geometric local flow angle
+  and a_lin the same angle with the interference factors above, so the factors act on
+  the attached-flow lift only, which vanishes broadside. The lift acts at the MAC
+  quarter chord (three-quarter chord in reverse flow), the crossflow at mid-chord.
+  The fins keep producing a physically sized restoring force up to 90 deg instead of
   being clipped at a stall angle (OpenRocket clips at 20 deg, which creates a
   spurious stable tail-first trim during ballistic descent).
 * Canard vortices (optional, ``aero.canard_vortex.model: vortex``): each canard
@@ -42,7 +51,10 @@ same lift model rather than from separate empirical damping terms:
   chord; the moment about the hinge line (a radial line at ``hinge_from_root_le``,
   default the planform area centroid) is positive when it increases the deflection.
 * Axial force: zero-lift drag build-up (skin friction with roughness limit,
-  pressure, base and fin edge drag) times OpenRocket's angle-of-attack multiplier.
+  pressure, base and fin edge drag) times OpenRocket's angle-of-attack multiplier,
+  which falls to zero at 90 deg. In reverse flow (tail first) the build-up is done for
+  the reversed body: the base faces the flow (stagnation pressure), the nose becomes a
+  pointed afterbody (no base drag) and the fin trailing edges lead.
 
 Sign conventions (body frame, +x forward):
   canard deflection delta_i > 0 produces a positive roll moment about +x.
@@ -61,8 +73,11 @@ from rocket_dt.interference import panel_interference
 from rocket_dt.io.ork import FINISH_ROUGHNESS, FinSet, OrkRocket, SymmetricComponent, reference_length, rocket_length
 from rocket_dt.mass import fin_angles, fin_root_radius
 
-BODY_LIFT_K = 1.1
 FIN_PLATE_CDC = 1.2  # broadside normal-force coefficient of a low-aspect-ratio flat plate
+# finite-length factor eta of the crossflow drag of a cylinder versus L/D (Hoerner, subcritical;
+# as used by Jorgensen, NASA TR R-474)
+_ETA_LD = np.array([1.0, 2.0, 5.0, 10.0, 20.0, 40.0])
+_ETA = np.array([0.53, 0.57, 0.62, 0.68, 0.76, 0.82])
 _A17 = math.radians(17.0)
 
 
@@ -87,7 +102,7 @@ def _axial_multiplier(alpha: float) -> float:
 class FinSetAero:
     path: str
     count: int
-    station_cp: float  # MAC quarter chord station
+    station_cp: float  # MAC quarter chord station (attached-flow lift)
     root_radius: float
     planform: FinPlanform
     thickness: float
@@ -104,6 +119,8 @@ class FinSetAero:
     interference: float = field(init=False)  # K_T, for the body's angle of attack
     deflection_matrix: np.ndarray = field(init=False)  # fin loads per unit fin deflection
     roll_damping: float = field(init=False)  # roll-rate interference factor
+    station_mid: float = field(init=False)  # MAC mid-chord station (flat-plate crossflow)
+    station_rev: float = field(init=False)  # MAC three-quarter chord station (lift in reverse flow)
     _rho: np.ndarray = field(init=False)
     _w: np.ndarray = field(init=False)
 
@@ -113,6 +130,8 @@ class FinSetAero:
         pi = panel_interference(self.root_radius, s, self.count)
         self.deflection_matrix, self.roll_damping = pi.load_matrix, pi.roll_damping
         self.carryover *= pi.carryover
+        self.station_mid = self.station_cp + 0.25 * self.planform.mac_length
+        self.station_rev = self.station_cp + 0.5 * self.planform.mac_length
         self._rho = self.root_radius + self.planform.y
         self._w = self.planform.chord * self.planform.dy / self.planform.area
 
@@ -151,7 +170,8 @@ class AeroModel:
     def __init__(self, ork: OrkRocket, fincan_paths: set[str], canard_path: str | None,
                  fin_misalignment: dict[str, list[float]], drag_scale: float = 1.0,
                  canard_vortex: CanardVortexConfig | None = None, canard_hinge: float | None = None,
-                 canard_body_carryover: float = 1.0, slice_length: float = 0.025):
+                 canard_body_carryover: float = 1.0, body_crossflow_cd: float = 1.2,
+                 slice_length: float = 0.025):
         self.ref_length = reference_length(ork)
         self.ref_area = math.pi * self.ref_length ** 2 / 4.0
         self.length = rocket_length(ork)
@@ -185,6 +205,8 @@ class AeroModel:
             dxs.append(np.diff(edges))
         self.slice_station = np.concatenate(xs)
         self.slice_area = 2.0 * np.concatenate(rs) * np.concatenate(dxs)  # planform area per slice
+        self.crossflow_k = body_crossflow_cd * float(np.interp(self.length / self.max_diameter, _ETA_LD, _ETA,
+                                                                right=_ETA[-1]))
 
         # Fin sets
         fin_sets = [c for c in ork.walk() if isinstance(c, FinSet)]
@@ -218,8 +240,9 @@ class AeroModel:
             if not 0.0 <= hinge <= float((pf.le + pf.chord).max()):
                 raise ValueError(f"Canard hinge {hinge} m from the root LE is outside the canard")
             self.canard_hinge = hinge
-            # hinge arm of each strip: hinge line minus local quarter chord (both from the root LE)
-            self._hinge_arm = hinge - (pf.le + 0.25 * pf.chord)
+            # hinge arm of each strip: hinge line minus local quarter chord (lift), three-quarter
+            # chord (lift in reverse flow) and mid-chord (crossflow), all from the root LE
+            self._hinge_arm = {q: hinge - (pf.le + q * pf.chord) for q in (0.25, 0.5, 0.75)}
         # canards first, so their vortices are known when the fin sets behind them are evaluated
         self._eval_order = sorted(self.fins, key=lambda f: not f.is_canard)
         self._vortex_targets = {id(f) for f in self.fins if canards is not None and not f.is_canard
@@ -235,28 +258,7 @@ class AeroModel:
         self._body_wet = [(p.wetted_area(), FINISH_ROUGHNESS[c.finish]) for c, p in self.profiles]
         self._fin_wet = [(2.0 * f.count * f.planform.area, f.roughness, f.thickness / f.planform.mac_length)
                          for f in self.fins]
-        fwd, boattail, steps_up, steps_down = [], [], [], []
-        for c, p in self.profiles:
-            r0, r1 = float(p.r[0]), float(p.r[-1])
-            da = math.pi * abs(r1 * r1 - r0 * r0) / self.ref_area
-            if r1 > r0 + 1e-9:
-                slope = (p.r[-1] - p.r[-2]) / (p.x[-1] - p.x[-2]) if c.kind == "nosecone" else (r1 - r0) / c.length
-                fwd.append((0.8 * math.sin(math.atan(slope)) ** 2, da))
-            elif r0 > r1 + 1e-9:
-                gamma = c.length / (2.0 * (r0 - r1))
-                factor = 1.0 if gamma < 1 else ((3.0 - gamma) / 2.0 if gamma < 3 else 0.0)
-                boattail.append((factor, da))
-        for (_, pa), (_, pb) in zip(self.profiles[:-1], self.profiles[1:]):
-            ra, rb = float(pa.r[-1]), float(pb.r[0])
-            da = math.pi * abs(rb * rb - ra * ra) / self.ref_area
-            if rb > ra + 1e-6:
-                steps_up.append(da)
-            elif ra > rb + 1e-6:
-                steps_down.append(da)
-        self._fwd, self._boattail = fwd, boattail
-        self._steps_up, self._steps_down = steps_up, steps_down
-        r_base = float(self.profiles[-1][1].r[-1])
-        self._base_area = math.pi * r_base ** 2 / self.ref_area
+        self._press = {False: self._pressure_terms(reverse=False), True: self._pressure_terms(reverse=True)}
 
         # Precomputed friction terms: wetted area (incl. form factors) and roughness-limited Cf per surface
         ff_body = 1.0 + 1.0 / (2.0 * self.fineness)
@@ -264,20 +266,48 @@ class AeroModel:
                                    + [a * (1.0 + 2.0 * tc) for a, _, tc in self._fin_wet]) / self.ref_area
         self._fric_cf_rough = np.array([0.032 * (r / self.length) ** 0.2 if r > 0 else 0.0
                                         for r in [r for _, r in self._body_wet] + [r for _, r, _ in self._fin_wet]])
-        # Fin edge drag: (LE sweep factor, frontal area ratio, cross section) per fin set
-        self._fin_edges = []
+
+    def _pressure_terms(self, reverse: bool) -> dict:
+        """Pressure-drag build-up terms for flow from the nose (or from the tail if ``reverse``).
+
+        In reverse flow every profile is traversed from its aft end, so the base becomes a
+        forward-facing step (stagnation pressure) and the nose a pointed afterbody.
+        """
+        fwd = boattail = steps_up = steps_down = 0.0
+        prof = [(c, p.r[::-1] if reverse else p.r, p.x[-1] - p.x[::-1] if reverse else p.x)
+                for c, p in (self.profiles[::-1] if reverse else self.profiles)]
+        for c, r, x in prof:
+            r0, r1 = float(r[0]), float(r[-1])
+            da = math.pi * abs(r1 * r1 - r0 * r0) / self.ref_area
+            if r1 > r0 + 1e-9:
+                tip = c.kind == "nosecone" and not reverse
+                slope = (r[-1] - r[-2]) / (x[-1] - x[-2]) if tip else (r1 - r0) / c.length
+                fwd += 0.8 * math.sin(math.atan(slope)) ** 2 * da
+            elif r0 > r1 + 1e-9:
+                gamma = c.length / (2.0 * (r0 - r1))
+                boattail += (1.0 if gamma < 1 else ((3.0 - gamma) / 2.0 if gamma < 3 else 0.0)) * da
+        for (_, ra_, _), (_, rb_, _) in zip(prof[:-1], prof[1:]):
+            ra, rb = float(ra_[-1]), float(rb_[0])
+            da = math.pi * abs(rb * rb - ra * ra) / self.ref_area
+            if rb > ra + 1e-6:
+                steps_up += da
+            elif ra > rb + 1e-6:
+                steps_down += da
+        # flat face at the leading end (the base in reverse flow): a step up from nothing
+        steps_up += math.pi * float(prof[0][1][0]) ** 2 / self.ref_area
+        # Fin edge drag: (leading-edge sweep factor, frontal area ratio, cross section) per fin set
+        edges = []
         for f in self.fins:
             if f.cross_section not in ("square", "rounded", "airfoil"):
                 raise ValueError(f"Unknown cross section {f.cross_section}")
-            self._fin_edges.append((math.cos(f.planform.le_sweep) ** 2,
-                                    f.count * f.planform.span * f.thickness / self.ref_area, f.cross_section))
-        self._fwd_sum = sum(c * da for c, da in self._fwd)
-        self._boattail_sum = sum(f * da for f, da in self._boattail)
-        self._steps_up_sum = sum(self._steps_up)
-        self._steps_down_sum = sum(self._steps_down)
+            sweep = f.planform.te_sweep if reverse else f.planform.le_sweep
+            edges.append((math.cos(sweep) ** 2, f.count * f.planform.span * f.thickness / self.ref_area,
+                          f.cross_section))
+        return {"fwd": fwd, "boattail": boattail, "steps_up": steps_up, "steps_down": steps_down,
+                "base": math.pi * float(prof[-1][1][-1]) ** 2 / self.ref_area, "fin_edges": edges}
 
-    def drag_breakdown(self, mach: float, reynolds: float) -> dict:
-        """Zero-angle-of-attack drag coefficients (referenced to A_ref)."""
+    def drag_breakdown(self, mach: float, reynolds: float, reverse: bool = False) -> dict:
+        """Zero-angle-of-attack drag coefficients (referenced to A_ref); ``reverse`` for tail-first flow."""
         m2 = mach * mach
         comp = 1.0 - 0.1 * m2
         cf_t = 1.48e-2 if reynolds < 1e4 else 1.0 / (1.50 * math.log(reynolds) - 5.6) ** 2
@@ -285,15 +315,16 @@ class AeroModel:
 
         cdb = _base_cd(mach)
         stag = _stagnation_cd(mach)
-        pressure = self._fwd_sum + self._boattail_sum * cdb + self._steps_up_sum * stag + self._steps_down_sum * cdb
+        t = self._press[reverse]
+        pressure = t["fwd"] + t["boattail"] * cdb + t["steps_up"] * stag + t["steps_down"] * cdb
         rounded_le = (1.0 - min(m2, 0.81)) ** -0.417 - 1.0
-        for sweep_fac, area, xs in self._fin_edges:
+        for sweep_fac, area, xs in t["fin_edges"]:
             if xs == "square":
                 le, te = stag, cdb
             else:
                 le, te = rounded_le, (cdb / 2.0 if xs == "rounded" else 0.0)
             pressure += (le * sweep_fac + te) * area
-        base = cdb * self._base_area
+        base = cdb * t["base"]
         s = self.drag_scale
         return {"friction": friction * s, "pressure": pressure * s, "base": base * s,
                 "total": (friction + pressure + base) * s}
@@ -356,7 +387,7 @@ class AeroModel:
         cos_a = vx / np.maximum(vmag[:nb], 1e-9)
         cos_half = np.sqrt(np.maximum(0.5 * (1.0 + cos_a), 0.0))
         coef[:nb] = 0.5 * rho * vmag[:nb] * self.ref_area * self.body_cna * cos_a * cos_half
-        coef[nb:] = 0.5 * rho * BODY_LIFT_K * self.slice_area * cmag[nb:]
+        coef[nb:] = 0.5 * rho * self.crossflow_k * self.slice_area * cmag[nb:]
         fy = -coef * vy
         fz = -coef * vz
         force[1] += fy.sum()
@@ -385,36 +416,43 @@ class AeroModel:
             if f.is_canard and canard_deflection is not None:
                 delta = delta + canard_deflection
             sgn = math.copysign(1.0, u)
+            vn_s = vn[:, None] + p_eff * f._rho[None, :]  # normal velocity of every strip
+            # angle of attack with the interference factors (attached-flow lift) and geometric
+            # flow angle; the dynamic pressure is that of the flow in the chordwise plane
             alpha = (f.interference * np.arctan2(vn, ua) - sgn * (f.deflection_matrix @ delta))[:, None] \
                 + f.roll_damping * np.arctan2(p_eff * f._rho[None, :], ua)
-            d_alpha = None
+            alpha_g = np.arctan2(vn_s, ua) - sgn * delta[:, None]
+            q_c = 0.5 * rho * (u * u + vn_s * vn_s)
             if vortex and vortices is not None and id(f) in self._vortex_targets:
                 d_alpha = self._vortex_alpha(vortices, f, phi, v_b, omega_b, cg_station)
-                strip_f, fn, roll = self._strip_loads(f, alpha + d_alpha.sum(axis=0), beta, q)
+                da = d_alpha.sum(axis=0)
+                lift, cross, roll = self._strip_loads(f, alpha + da, alpha_g + da, beta, q_c)
                 if diagnostics:
-                    roll0 = self._strip_loads(f, alpha, beta, q)[2]
+                    roll0 = self._strip_loads(f, alpha, alpha_g, beta, q_c)[2]
                     vortex_roll += roll - roll0
                     for i in range(len(d_alpha)):
-                        vortex_roll_each[i] += self._strip_loads(f, alpha + d_alpha[i], beta, q)[2] - roll0
+                        vortex_roll_each[i] += self._strip_loads(f, alpha + d_alpha[i], alpha_g + d_alpha[i],
+                                                                 beta, q_c)[2] - roll0
             else:
-                strip_f, fn, roll = self._strip_loads(f, alpha, beta, q)
+                lift, cross, roll = self._strip_loads(f, alpha, alpha_g, beta, q_c)
+            fn_lift, fn_cross = lift.sum(axis=1), cross.sum(axis=1)
             if f.carryover:
                 # body carry-over of the deflected fins: along each fin normal, no roll moment
-                carry = sgn * f.carryover * q * self.ref_area * f.cn_alpha_single(beta) * delta
-                fn_total = fn + carry
-            else:
-                fn_total = fn
+                fn_lift = fn_lift + sgn * f.carryover * q * self.ref_area * f.cn_alpha_single(beta) * delta
+            fn_total = fn_lift + fn_cross
             force[1] += -float(sphi @ fn_total)
             force[2] += float(cphi @ fn_total)
-            # r_cp x̂ × (fn n̂) = -r_cp fn ê_r
-            moment[1] += -r_cp * float(fn_total @ cphi)
-            moment[2] += -r_cp * float(fn_total @ sphi)
+            # r x̂ × (fn n̂) = -r fn ê_r, lift at the quarter chord of the flow, crossflow at mid-chord
+            for r_arm, fn_part in ((cg_station - (f.station_cp if u >= 0 else f.station_rev), fn_lift),
+                                   (cg_station - f.station_mid, fn_cross)):
+                moment[1] += -r_arm * float(fn_part @ cphi)
+                moment[2] += -r_arm * float(fn_part @ sphi)
             moment[0] += roll
             if f.on_fincan:
                 fincan_roll += roll
             if f.is_canard:
                 canard_roll += roll
-                hinge = strip_f @ self._hinge_arm
+                hinge = lift @ self._hinge_arm[0.25 if u >= 0 else 0.75] + cross @ self._hinge_arm[0.5]
                 if self._vortex_targets and u > 1e-3:
                     r_v = f.root_radius + 0.25 * math.pi * f.planform.span
                     gamma = self.vortex.strength_factor * fn_total / (rho * V * (r_v - f.root_radius ** 2 / r_v))
@@ -422,11 +460,12 @@ class AeroModel:
 
         # --- axial force
         reynolds = V * self.length / nu
-        dr = self.drag_breakdown(mach, reynolds)
         cos_a = max(-1.0, min(1.0, vx / V))
         aoa = math.acos(cos_a)
-        mul = _axial_multiplier(aoa if aoa <= math.pi / 2 else math.pi - aoa)
-        ca = mul * dr["total"] * (1.0 if aoa <= math.pi / 2 else -1.0)
+        reverse = aoa > math.pi / 2
+        dr = self.drag_breakdown(mach, reynolds, reverse)
+        mul = _axial_multiplier(math.pi - aoa if reverse else aoa)
+        ca = mul * dr["total"] * (-1.0 if reverse else 1.0)
         force[0] -= q * self.ref_area * ca
 
         diag = None
@@ -440,14 +479,19 @@ class AeroModel:
         return AeroResult(force, moment, fincan_roll, diag, hinge)
 
 
-    def _strip_loads(self, f: FinSetAero, alpha: np.ndarray, beta: float, q: float):
-        """Strip forces along each fin normal, per-fin normal force and total roll moment of a fin set."""
+    def _strip_loads(self, f: FinSetAero, alpha: np.ndarray, alpha_g: np.ndarray, beta: float, q: np.ndarray):
+        """Strip forces along each fin normal (attached-flow lift, flat-plate crossflow) and the roll moment.
+
+        alpha: angle of attack with interference factors, alpha_g: geometric local flow angle,
+        q: dynamic pressure in the chordwise plane, all (n_fins, n_strips).
+        """
         alpha = np.clip(alpha, -0.5 * math.pi, 0.5 * math.pi)
-        sa = np.sin(alpha)
-        cn = f.cn_alpha_single(beta) * sa * np.cos(alpha) \
-            + FIN_PLATE_CDC * f.planform.area / self.ref_area * sa * np.abs(sa)
-        strip_f = -q * self.ref_area * f._w[None, :] * cn
-        return strip_f, strip_f.sum(axis=1), float((strip_f @ f._rho).sum())
+        alpha_g = np.clip(alpha_g, -0.5 * math.pi, 0.5 * math.pi)
+        sg = np.sin(alpha_g)
+        qw = -q * self.ref_area * f._w[None, :]
+        lift = qw * f.cn_alpha_single(beta) * np.sin(alpha) * np.cos(alpha_g)
+        cross = qw * FIN_PLATE_CDC * f.planform.area / self.ref_area * sg * np.abs(sg)
+        return lift, cross, float(((lift + cross) @ f._rho).sum())
 
     def _vortex_alpha(self, vx: _Vortices, f: FinSetAero, phi: np.ndarray, v_b: np.ndarray,
                       omega_b: np.ndarray, cg_station: float) -> np.ndarray:

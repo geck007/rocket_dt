@@ -68,7 +68,7 @@ tests/
 
 Baseline flight (vertical rail, 2 m/s wind, no controller): apogee **1793 m** at 19.2 s, max speed 209 m/s
 (Mach 0.62), max acceleration 11.7 g, rail exit at 14.2 m/s. Without control the rocket turns into the wind
-and is 45° off vertical by apogee (36° with ideal servos: with zero command, a canard resting against its
+and is 45° off vertical by apogee (39° with ideal servos: with zero command, a canard resting against its
 backlash is enough to steer it). With the example controller it stays within about 7° on a 5° rail in 4 m/s wind.
 
 ## Dashboard
@@ -244,8 +244,8 @@ The controller:
 | Drift at apogee | 505 m | 95 m |
 | Apogee | 1747 m | 1785 m |
 
-The gains hold up across the canard-authority uncertainty: max tilt is 7.6° with no body carry-over and
-6.8° with all of it.
+The gains hold up across the canard-authority uncertainty: max tilt is 7.7° with no body carry-over and
+6.7° with all of it.
 
 The price is a higher angle of attack just off the rail (≈ 11°). Holding the rocket vertical at low speed
 means not turning into the wind.
@@ -269,7 +269,7 @@ means not turning into the wind.
 | Grain geometry and order | openMotor `.ric` | Cross-checked against the CSV grain masses |
 | Loaded motor mass, case diameter/length | `.eng` header | `.eng` thrust and propellant mass are only cross-checked |
 | Launch site, wind, atmosphere, disturbances, integrator | YAML | Simulation settings stored in the .ork are ignored |
-| Canard vortex model, canard body carry-over | YAML `aero.canard_vortex`, `aero.canard_body_carryover` | |
+| Canard vortex model, canard body carry-over, body crossflow C_d | YAML `aero.canard_vortex`, `aero.canard_body_carryover`, `aero.body_crossflow_cd` | |
 | Canard servos and hinge line | YAML `actuators.canards` | |
 | Sensors | YAML `sensors` | Each one has `enabled`; GNSS is off in the baseline |
 | Controller | YAML `controller` (`type`, `rate_hz`, `params`) | Types are registered in `rocket_dt/controllers/__init__.py` |
@@ -293,8 +293,14 @@ that share a name.
 * **Aerodynamics** (`aero.py`): the extended Barrowman method as implemented in OpenRocket (Niskanen 2009),
   evaluated with the local flow at every lifting element, so pitch and roll damping come out of the lift model.
   * Nose and transitions: slender-body CNα, in Jorgensen's form for large α.
-  * Body crossflow lift (K = 1.1), over 2.5 cm slices.
-  * Fins and canards: per-fin Diederich lift slope, in spanwise strips, plus a flat-plate term at high α.
+  * Body crossflow lift η·C_dc·A_plan·sin²α (Jorgensen), over 2.5 cm slices: C_dc = 1.2 (subcritical
+    cylinder, `aero.body_crossflow_cd`), η = 0.72 for L/D = 15. OpenRocket's K = 1.1 overstates the
+    broadside force by ≈ 25 %.
+  * Fins and canards: per-fin Diederich lift slope, in spanwise strips, plus a flat-plate crossflow term
+    (C_dc 1.2) at high α. Both use the dynamic pressure of the flow in the fin's chordwise plane (spanwise
+    flow does not load a fin), the interference factors below act on the attached-flow lift only, and the
+    lift fades as cos α so a broadside fin carries crossflow only. Lift acts at the MAC quarter chord
+    (three-quarter chord in reverse flow), crossflow at mid-chord.
   * Fin interference (`interference.py`):
     * Angle of attack of the body uses Barrowman's K_T = 1 + r/(s+r), as OpenRocket does.
     * Fin deflections (canard commands, cant, misalignment) and roll rate use slender-body factors,
@@ -304,7 +310,8 @@ that share a name.
     * The body carry-over of a deflected canard is scaled by `aero.canard_body_carryover`, since a hinge
       gap at the canard root loses part of it.
   * Drag buildup: skin friction with a roughness limit, pressure drag, fin edge drag by cross-section, base
-    drag, and OpenRocket's axial-force-vs-α multiplier.
+    drag, and OpenRocket's axial-force-vs-α multiplier (zero at 90°). Tail-first, the build-up is redone for
+    the reversed body: the base faces the flow, so CD is 0.94 against 0.39 nose-first.
   * Canard vortices (`aero.canard_vortex`): one tip vortex per canard, with its strength set by that canard's
     lift plus its body carry-over. It and its image in the body are carried to the tail fins (roll lag, crossflow drift, Lamb–Oseen core)
     and change every fin strip's angle of attack. The effect is resolved for each canard–fin pair, depends on the
@@ -351,7 +358,7 @@ and switches the canard vortices off (OpenRocket ignores them).
 Component masses match OpenRocket to better than 0.001 %. Known, intended differences:
 * **Roll inertia (+16 %):** OpenRocket models the motor as a solid cylinder.
 * **Damping:** OpenRocket uses empirical damping terms, so its angle-of-attack oscillation is less damped.
-* **Descent:** OpenRocket clips fin lift at 20° and falls tail-first; this model falls broadside.
+* **Descent:** OpenRocket clips fin lift at 20° and falls tail-first; this model turns nose-down ≈ 3 s after apogee.
 
 ## Placeholders to replace with measured data
 
@@ -367,6 +374,7 @@ Component masses match OpenRocket to better than 0.001 %. Known, intended differ
 | GNSS | M10-class, off | the chosen receiver's dynamics limits |
 | Canard vortex strength / core radius | factor 1.0 / 6 mm (dispersed 0.5–1.5 in Monte Carlo) | CFD, or fin-can spin under a known canard offset in flight |
 | Canard body carry-over | 0.5 of the slender-body value (dispersed 0–1 in Monte Carlo) | the hinge gap; wind tunnel or the pitch response to a canard step in flight |
+| Body crossflow drag coefficient | 1.2 (subcritical cylinder) | only matters at high α; the descent is insensitive to it |
 | `vertical_hold` gains | kp 5, ki 2.5, kd 75 m, k_roll 0.76 m | tuning against the measured servo and sensors |
 
 ## Findings so far
@@ -387,8 +395,11 @@ Component masses match OpenRocket to better than 0.001 %. Known, intended differ
     body's roll response is unchanged.
   * Limitation: one vortex per canard, whose strength comes from an impulse balance (lift plus body
     carry-over). Slender-body theory puts the circulation shed at the root within ≈ 20 % of it.
-* **Without recovery events the descent is ballistic and very sensitive.** The rocket falls broadside and small
-  canard deflections tip it nose-first. Only the ascent results are meaningful.
+* **Without recovery events the descent is ballistic.** The rocket hangs broadside for ≈ 2.5–3.5 s after
+  apogee (≈ 12 m/s), then turns nose-down and hits the ground at ≈ 157 m/s ≈ 40 s after launch. Broadside the
+  CP is only 0–0.3 cal aft of the CG (depending on the fin-can roll angle), so this phase is marginally stable;
+  it barely changes over body crossflow C_dc 0.4–1.8. Not modelled: shielding of the leeward fins by the
+  body's wake, and the drag crisis of the body (crossflow speed above ≈ 35 m/s).
 
 ## Next steps
 

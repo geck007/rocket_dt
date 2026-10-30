@@ -131,6 +131,9 @@ class AeroConfig:
     # fraction of the slender-body body carry-over load of a deflected canard that the body really
     # gets: 1 = sealed root, less with a hinge gap between the canard root and the body
     canard_body_carryover: float = 1.0
+    # crossflow drag coefficient of the body's cross-section (2-D cylinder): 1.2 subcritical, falls to
+    # about 0.3-0.5 above the drag crisis (crossflow Reynolds number ~3e5, lower on a rough body)
+    body_crossflow_cd: float = 1.2
 
 
 @dataclass
@@ -399,6 +402,8 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("aero.canard_vortex: strength_factor must be >= 0 and core_radius > 0")
     if not 0.0 <= cfg.aero.canard_body_carryover <= 1.0:
         raise ConfigError("aero.canard_body_carryover must be in [0, 1]")
+    if not 0.0 < cfg.aero.body_crossflow_cd <= 2.0:
+        raise ConfigError("aero.body_crossflow_cd must be in (0, 2]")
     act = cfg.actuators.canards
     if act.model not in ("ideal", "servo"):
         raise ConfigError("actuators.canards.model must be 'ideal' or 'servo'")
