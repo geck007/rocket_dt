@@ -10,7 +10,7 @@ from rocket_dt import quaternion as Q
 from rocket_dt.atmosphere import G0
 from rocket_dt.builder import build_simulation
 from rocket_dt.config import ConfigError, ImuConfig, load_config, load_raw, parse_config
-from rocket_dt.controllers import make_controller
+from rocket_dt.controllers import CONTROLLERS, make_controller
 from rocket_dt.controllers.estimation import StrapdownEstimator
 from rocket_dt.controllers.vertical_hold import VerticalHold
 from rocket_dt.sensors import ImuSample
@@ -120,3 +120,26 @@ def test_vertical_hold_keeps_the_rocket_upright(root):
     d = out["vertical_hold"][1]
     assert d["ctrl_active"].max() == 1.0 and d["ctrl_calibrated"][-1] == 1.0
     assert np.degrees(np.abs(d["p"]).max()) < 30.0  # roll damped
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", sorted(CONTROLLERS))
+def test_every_controller_flies_the_first_seconds(root, name):
+    """Smoke test for every controller module in rocket_dt/controllers/ (default params, baseline rocket)."""
+    cfg = load_config(root / "configs/baseline.yaml")
+    cfg.controller.type, cfg.controller.params = name, {}
+    cfg.simulation.t_max = 3.0
+    sim = build_simulation(cfg)
+    n = sim.rocket.aero.n_canards
+    update = sim.controller.update
+
+    def checked(inp):
+        cmd = np.asarray(update(inp), dtype=float)
+        assert cmd.shape == (n,), f"{name} must return one deflection (rad) per canard"
+        assert np.all(np.isfinite(cmd)), f"{name} returned a non-finite command"
+        return cmd
+
+    sim.controller.update = checked
+    d = sim.run().data
+    assert d["t"][-1] > 2.9
+    assert all(np.all(np.isfinite(v)) for k, v in d.items() if k.startswith("ctrl_"))

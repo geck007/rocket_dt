@@ -12,13 +12,33 @@ slot where the flight software plugs in.
 
 ## Getting started
 
-```bash
-cd junior_larp
-python3 -m venv venv && source venv/bin/activate   # once (Python ≥ 3.11)
-pip install -e .[test,dashboard]                   # once
+You need Python 3.11 or newer (`python3 --version`) and git.
 
-streamlit run dashboard/app.py                     # dashboard on http://localhost:8501
+**1. Clone and install (once):**
+
+```bash
+git clone https://github.com/<your-account>/junior_larp.git
+cd junior_larp
+python3 -m venv venv
+source venv/bin/activate              # Windows (PowerShell): venv\Scripts\Activate.ps1
+pip install -e ".[test,dashboard]"
 ```
+
+**2. Check that it works:**
+
+```bash
+pytest -m "not slow"                  # under a minute, everything should pass
+streamlit run dashboard/app.py        # opens the dashboard on http://localhost:8501
+```
+
+Every time you open a new terminal, `cd junior_larp` and activate the venv again (the `source` /
+`Activate.ps1` line). `-e` installs the package in editable mode, so your changes to the code take effect
+without reinstalling.
+
+**3. Write your controller:** see [Working on your own controller](#working-on-your-own-controller-git)
+for the git side and [Writing a controller](#writing-a-controller) for the code.
+
+**Commands:**
 
 | Command | What it does |
 |---|---|
@@ -27,8 +47,50 @@ streamlit run dashboard/app.py                     # dashboard on http://localho
 | `python scripts/run_sim.py configs/baseline.yaml --apogee --canard-schedule "0:0,3:0,3.01:0.5,6:0.5,6.01:0"` | Open-loop canard roll test (replaces the controller) |
 | `python scripts/montecarlo.py configs/vertical_hold.yaml --runs 200 --apogee` | Monte Carlo with the dispersions in the config |
 | `python scripts/validate_openrocket.py` | Comparison with the OpenRocket export `data/all.csv` |
-| `pytest` | All tests (about 1.5 minutes) |
-| `pytest -m "not slow"` | Everything except the full flights (about 5 s) |
+| `pytest` | All tests (a few minutes) |
+| `pytest -m "not slow"` | Everything except the full flights (about 20 s) |
+
+## Working on your own controller (git)
+
+Everyone works on their own branch and in their own files, so nobody overwrites anyone else.
+
+**Your files.** Pick a short name, e.g. `alex_pid`. You own:
+* `rocket_dt/controllers/alex_pid.py`: your controller. It is found automatically, no registration needed.
+* `configs/alex_pid.yaml`: your scenario(s); add more as `configs/alex_pid_*.yaml`.
+
+Don't change the physics (`rocket_dt/*.py`), `baseline.yaml` or someone else's files on your branch. If you
+think the model is wrong, open an issue on GitHub instead.
+
+**Start:**
+
+```bash
+git checkout main
+git pull                                # get the latest version
+git checkout -b alex_pid                # your branch (once)
+```
+
+**Save your work (as often as you like):**
+
+```bash
+git add rocket_dt/controllers/alex_pid.py configs/alex_pid*.yaml
+git commit -m "alex_pid: add roll damping"
+git push -u origin alex_pid             # -u only the first time; afterwards just: git push
+```
+
+**Get the latest model** (do this whenever main has changed):
+
+```bash
+git checkout main && git pull
+git checkout alex_pid && git merge main
+```
+
+**Hand it in:** open a pull request from your branch into `main` on GitHub. The tests run automatically on
+every pull request (GitHub Actions, a few minutes). A test flies every controller in
+`rocket_dt/controllers/` for the first seconds, so a controller that crashes or returns the wrong shape
+fails the build. Fix it before asking for a review.
+
+**Never commit:** `venv/`, `output/` (simulation results, already ignored by git), large result files.
+Run `git status` before `git add` to see what you are about to commit.
 
 ## Layout
 
@@ -46,12 +108,13 @@ rocket_dt/
   sensors.py            IMU, barometer and GNSS models
   actuators.py          canard servo model
   control.py            controller interface (what a controller receives and returns)
-  controllers/          controllers you can pick in a config; vertical_hold.py is the example,
-                        estimation.py a simple strapdown estimator
+  controllers/          one module per controller, found automatically; vertical_hold.py is the
+                        example, estimation.py a simple strapdown estimator (a helper, not a controller)
   config.py             strict YAML schema
   builder.py            puts the .ork, motor files and YAML together
   io/, analysis/, viz.py
 tests/
+.github/workflows/      runs the tests on every push to main and every pull request
 ```
 
 ## The rocket today
@@ -130,8 +193,9 @@ to `rocket_dt/controllers/estimation.py`; together they are about 200 lines.
 
 ### 2. Make your own
 
-Copy `vertical_hold.py` to `rocket_dt/controllers/my_controller.py`. A controller is a `Params` dataclass
-(its tunable numbers) plus a class with `reset()` and `update()`:
+Copy `vertical_hold.py` to `rocket_dt/controllers/my_controller.py` (use your own name). A controller module
+has a `Params` dataclass (its tunable numbers), a class with `reset()` and `update()`, and a `CONTROLLER`
+line naming that class:
 
 ```python
 from dataclasses import dataclass
@@ -158,22 +222,13 @@ class MyController(Controller):
 
     def telemetry(self) -> dict:             # optional: logged as ctrl_<key>, shown in the dashboard
         return {"roll_rate_est": self.roll_rate}
+
+
+CONTROLLER = MyController                    # registers the module as controller type "my_controller"
 ```
 
-Register it in `rocket_dt/controllers/__init__.py`. Import your module next to `vertical_hold`, and add a
-line to `CONTROLLERS`:
-
-```python
-from rocket_dt.controllers import my_controller, vertical_hold
-
-CONTROLLERS = {
-    "none": (None, lambda rocket, cfg, params: NoControl(rocket.aero.n_canards)),
-    "vertical_hold": (vertical_hold.Params, vertical_hold.VerticalHold),
-    "my_controller": (my_controller.Params, my_controller.MyController),
-}
-```
-
-Then select it in a config that extends the baseline:
+Any module in `rocket_dt/controllers/` with a `CONTROLLER` line is picked up under its file name, so there
+is no list to edit. Select it in your own config (`configs/my_controller.yaml`), which extends the baseline:
 
 ```yaml
 extends: baseline.yaml

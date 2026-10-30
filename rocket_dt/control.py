@@ -14,8 +14,8 @@ not use it.
 Optional ``telemetry()``: a dict of floats (the same keys on every call) that is
 logged with the flight as ``ctrl_<key>`` columns.
 
-Controllers that can be chosen from a config are registered in
-``rocket_dt.controllers``; see ``rocket_dt/controllers/vertical_hold.py`` for an example.
+Controllers that can be chosen from a config are modules in ``rocket_dt/controllers/``,
+found automatically; see ``rocket_dt/controllers/vertical_hold.py`` for an example.
 """
 
 from __future__ import annotations

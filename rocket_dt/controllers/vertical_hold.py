@@ -104,3 +104,6 @@ class VerticalHold(Controller):
                 "speed_est": self.est.speed, "q_est": self.est.dynamic_pressure,
                 "integral_deg": math.degrees(float(np.linalg.norm(self.integral)) * self.p.ki),
                 "calibrated": float(self.est.calibrated)}
+
+
+CONTROLLER = VerticalHold

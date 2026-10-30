@@ -235,7 +235,7 @@ class SensorsConfig:
 
 @dataclass
 class ControllerConfig:
-    type: str = "none"  # a name registered in rocket_dt.controllers.CONTROLLERS
+    type: str = "none"  # a module name in rocket_dt/controllers/ (or 'none')
     rate_hz: float = 100.0
     params: dict = field(default_factory=dict)  # fields of the controller's Params dataclass (checked strictly)
 
