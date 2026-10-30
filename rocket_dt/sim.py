@@ -132,6 +132,8 @@ class FlightResult:
             f"  min stab. margin {np.nanmin(d['stability_cal'][:i_apo + 1]):9.2f} cal (ascent, after rail)",
             f"  max |body roll|  {np.degrees(np.abs(d['p']).max()):9.1f} deg/s",
             f"  max |fin-can roll rate (inertial)| {np.degrees(np.abs(d['fincan_rate_abs']).max()):9.1f} deg/s",
+            f"  off the pad's vertical at apogee {np.hypot(d['x'][i_apo], d['y'][i_apo]):6.1f} m "
+            f"(max {np.hypot(d['x'][:i_apo + 1], d['y'][:i_apo + 1]).max():.1f} m)",
             f"  landing point    E {d['x'][-1]:8.1f} m, N {d['y'][-1]:8.1f} m",
         ]
         return "\n".join(lines)

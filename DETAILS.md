@@ -10,7 +10,7 @@
 | Canards | 4 × airfoil, 64 mm span, CP at station 0.80 m; hinge line at the planform centroid; one servo each |
 | Tail fins | 4 × airfoil, 160 mm span, on the free fin can (1.83 kg, roll inertia 0.026 kg m²) |
 | Static margin | 1.84 cal at liftoff, 1.8–2.2 cal during the ascent |
-| Avionics | 2 IMUs, a barometer; GNSS configured but off |
+| Avionics | 2 IMUs, a barometer; GNSS configured, off in the baseline (on in `pad_hold.yaml`) |
 
 Baseline flight (vertical rail, 2 m/s wind, no controller): apogee 1793 m at 19.2 s, max speed 209 m/s
 (Mach 0.62), max acceleration 11.7 g, rail exit at 14.2 m/s. Uncontrolled, the rocket turns into the wind and
@@ -86,7 +86,68 @@ is higher (≈ 11°), since the rocket is held vertical instead of turning into 
   * Gyro g-sensitivity (0.1 °/s per g × 11 g during the boost) adds up to ≈ 4°.
   * No aiding after launch (barometer altitude and vertical speed, GNSS after re-acquisition).
 * Roll is damped, not held at an angle.
-* The target is a fixed direction; following a path f(x, y, z) = 0 needs position feedback on top.
+* The target is a fixed direction; following a path f(x, y, z) = 0 needs position feedback on top
+  (`pad_hold` below does that for the pad's vertical).
+
+## Example controller: `pad_hold`
+
+`rocket_dt/controllers/pad_hold.py`, run with `configs/pad_hold.yaml`. It keeps the rocket over the pad: it
+minimises the horizontal distance from the vertical through the pad (the ENU origin). It subclasses
+`vertical_hold` and replaces the fixed target with a moving one (`target_direction()`); the attitude loop is
+unchanged.
+
+### Workings
+
+Guidance, with r and v the estimated horizontal position and velocity:
+* desired horizontal velocity v_des = −r/τ (τ = 2 s)
+* target tilt a = (v_des + k_v·(v_des − v))/V (k_v = 3), limited to 10° from vertical
+* the axis is pointed along (a_e, a_n, 1). In the boost the thrust follows the axis; in the coast the lift
+  acts towards the side the nose points.
+
+Navigation: `estimation.py` with GNSS aiding (`sensors.gnss.enabled: true`).
+* **Why GNSS:** the IMU alone ends up tens of metres off by apogee, as much as the drift being removed. Gyro
+  g-sensitivity (0.1 °/s per g in the 11 g boost) tilts the attitude estimate a few degrees, which tilts the
+  integrated thrust. With an ideal IMU the inertial estimate would be good enough.
+* **Origin:** the mean GNSS position on the pad (removes the receiver's slowly varying offset).
+* **Correction:** each fix is compared with the inertial state at the fix's own time (0.1 s receiver
+  latency); 30 % of the position and 50 % of the velocity difference are added.
+* **Gap:** the receiver loses lock above 4 g and reacquires 1 s after; the boost is inertial only.
+* **Heading:** GNSS is in true ENU, so the estimated heading has to be true. It is set at launch from the
+  rail: the lean measured on the pad has to point along the rail azimuth. The rail's tilt and azimuth are
+  params (`rail_tilt_deg`, `rail_azimuth_deg`), i.e. what the team measured at the pad; the true rail is
+  `launch.*`. Heading error over 32 sensor seeds: 15° rms (max 36°) on a 5° rail, 23° rms (max 53°) on a
+  3° rail, 8° rms on a 10° rail.
+* **Fallback:** with GNSS off, or a rail tilted less than `min_align_tilt_deg` (4°), the target is vertical,
+  i.e. `vertical_hold`. Steering on the inertial position alone was tried: in the Monte Carlo it ended
+  about as far off (96 m vs 108 m mean) with more than twice the tilt (27° vs 11° mean).
+
+### Results
+
+`pad_hold.yaml`: same scenario as `vertical_hold.yaml` (5° rail, 4 m/s wind), GNSS on.
+
+| | `vertical_hold` | `pad_hold` |
+|---|---|---|
+| Off the pad's vertical at apogee | 95 m | 4.0 m |
+| Max off the vertical before apogee | 95 m | 14 m |
+| Max tilt from vertical | 7° | 21° |
+| Apogee | 1785 m | 1776 m |
+| Same, 8 m/s wind: off at apogee / max tilt | 143 m / 13° | 7.8 m / 36° |
+| Monte Carlo, 64 runs, rail 5° ± 0.5°, azimuth ± 3°: off at apogee, mean (max) | 92 m (202 m) | 2.6 m (8.5 m) |
+| Same Monte Carlo: max tilt, mean (max) | 10° (30°) | 15° (28°) |
+
+* **Tilt:** holding position in wind means flying into it, so the axis leans upwind. The lean is largest
+  near apogee, where the speed is low and the relative wind is mostly the wind. The 10° limit is on the
+  target; the axis exceeds it there, as the canards lose authority.
+* **Largest distance:** mid-flight, after the boost, before the GNSS fixes have pulled the estimate in.
+  With the true state, the distance before apogee stays under 12 m.
+
+### Limitations
+
+* Needs GNSS and a rail tilted at least ~4° (heading). A magnetometer, or a heading state in a Kalman
+  filter (GNSS velocity against the inertial velocity), would remove both the rail requirement and most
+  of the heading error.
+* The attitude is not corrected by GNSS, only position and velocity.
+* The guidance is linear and tuned by hand; it doesn't plan for the falling canard authority near apogee.
 
 ## Configuration
 
@@ -212,6 +273,7 @@ Component masses agree to better than 0.001 %. Known differences:
 | Canard body carry-over | 0.5 of the slender-body value (dispersed 0–1 in Monte Carlo) | hinge gap; wind tunnel or pitch response to a canard step in flight |
 | Body crossflow drag coefficient | 1.2 (subcritical cylinder) | only matters at high α; descent is insensitive to it |
 | `vertical_hold` gains | kp 5, ki 2.5, kd 75 m, k_roll 0.76 m | tuning against measured servo and sensors |
+| `pad_hold` guidance and GNSS gains | τ 2 s, k_v 3, GNSS 0.3 / 0.5 | tuning; GNSS gains against the real receiver's noise |
 
 ## Findings
 

@@ -15,8 +15,8 @@ Model, validation, placeholders and findings are in [DETAILS.md](DETAILS.md).
 Python 3.11 or newer and git.
 
 ```bash
-git clone https://github.com/geck007/mini_sram_dt.git
-cd mini_sram_dt
+git clone https://github.com/geck007/rocket_dt.git
+cd rocket_dt
 python3 -m venv venv
 source venv/bin/activate              # Windows (PowerShell): venv\Scripts\Activate.ps1
 pip install -e ".[test,dashboard]"
@@ -38,6 +38,7 @@ changes take effect without reinstalling.
 |---|---|
 | `python scripts/run_sim.py configs/baseline.yaml` | One flight, no controller → `output/baseline/` (flight.csv, sensor CSVs, plots) |
 | `python scripts/run_sim.py configs/vertical_hold.yaml` | Same rocket with the example controller (5° rail, 4 m/s wind) |
+| `python scripts/run_sim.py configs/pad_hold.yaml` | Second example: stays over the pad (same scenario, GNSS on) |
 | `python scripts/run_sim.py configs/baseline.yaml --apogee --canard-schedule "0:0,3:0,3.01:0.5,6:0.5,6.01:0"` | Open-loop canard schedule (replaces the controller) |
 | `python scripts/montecarlo.py configs/vertical_hold.yaml --runs 200 --apogee` | Monte Carlo with the config's dispersions |
 | `python scripts/validate_openrocket.py` | Comparison with the OpenRocket export `data/all.csv` |
@@ -47,8 +48,8 @@ changes take effect without reinstalling.
 ## Layout
 
 ```
-configs/                baseline.yaml (no control), vertical_hold.yaml (example controller),
-                        fincan_disturbance_demo.yaml (build errors), validation_openrocket.yaml
+configs/                baseline.yaml (no control), vertical_hold.yaml and pad_hold.yaml (example
+                        controllers), fincan_disturbance_demo.yaml (build errors), validation_openrocket.yaml
 data/                   rocket.ork.zip, motor files, OpenRocket exports, CAD
 dashboard/app.py        Streamlit dashboard
 scripts/                command-line tools (run_sim, montecarlo, validate_openrocket)
@@ -60,8 +61,9 @@ rocket_dt/
   sensors.py            IMU, barometer and GNSS models
   actuators.py          canard servo model
   control.py            controller interface
-  controllers/          one module per controller, found automatically; vertical_hold.py is the
-                        example, estimation.py a strapdown estimator (helper, not a controller)
+  controllers/          one module per controller, found automatically; vertical_hold.py and
+                        pad_hold.py are the examples, estimation.py a strapdown estimator with
+                        optional GNSS aiding (helper, not a controller)
   config.py             YAML schema
   builder.py            combines the .ork, motor files and YAML
   io/, analysis/, viz.py
@@ -119,8 +121,12 @@ Each simulation step:
 
 The controller sees what the flight computer would see: sensor data after errors and delays.
 
-The example is `rocket_dt/controllers/vertical_hold.py` (with `estimation.py`), run with
-`configs/vertical_hold.yaml`. It is described in [DETAILS.md](DETAILS.md#example-controller-vertical_hold).
+There are two examples, described in [DETAILS.md](DETAILS.md#example-controller-vertical_hold):
+* `rocket_dt/controllers/vertical_hold.py` (with `estimation.py`), run with `configs/vertical_hold.yaml`:
+  keeps the axis vertical.
+* `rocket_dt/controllers/pad_hold.py`, run with `configs/pad_hold.yaml`: keeps the rocket over the pad,
+  i.e. minimises its horizontal distance from the pad's vertical. It subclasses `vertical_hold` and
+  overrides `target_direction()`, and it needs GNSS (see [DETAILS.md](DETAILS.md#example-controller-pad_hold)).
 
 ### Controller module
 
@@ -221,7 +227,9 @@ Settings and tools available for testing a controller:
      constant tilt.
   3. Run the Monte Carlo, which disperses all of the errors at once.
 * **Monte Carlo:** `scripts/montecarlo.py` or the dashboard tab; reports the spread and worst case of
-  `max_tilt_deg`, apogee and roll.
+  `max_tilt_deg`, `dist_apogee_m` (distance from the pad's vertical at apogee), apogee and roll. The
+  baseline disperses the rail around vertical (σ 1°), so a config that depends on a tilted rail, such as
+  `pad_hold.yaml`, overrides that dispersion.
 * **Estimate vs truth:** *Telemetry → Controller* in the dashboard.
 * **Tilt:** *Tilt of axis from vertical* (`zenith_angle`, `tilt_east`, `tilt_north`) is the angle between the
   rocket's axis and the local vertical. The angle of attack is measured from the relative wind and goes to

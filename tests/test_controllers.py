@@ -143,3 +143,80 @@ def test_every_controller_flies_the_first_seconds(root, name):
     d = sim.run().data
     assert d["t"][-1] > 2.9
     assert all(np.all(np.isfinite(v)) for k, v in d.items() if k.startswith("ctrl_"))
+
+
+def _launched_estimator(rail_tilt_deg=5.0, rail_azimuth_deg=90.0, lean_dir_body=(0.0, 1.0), pad_gnss=None, **kw):
+    """Estimator calibrated on a rail leaning towards ``lean_dir_body`` (body y, z), then launched."""
+    est = StrapdownEstimator(ImuConfig(name="imu0", station=1.0), rail_tilt_deg=rail_tilt_deg,
+                             rail_azimuth_deg=rail_azimuth_deg, **kw)
+    tilt = math.radians(rail_tilt_deg)
+    ly, lz = lean_dir_body
+    # body axis leans by `tilt`; gravity's reaction (up) is then partly along body -lean
+    f_pad = G0 * np.array([math.cos(tilt), -math.sin(tilt) * ly, -math.sin(tilt) * lz])
+    t = _feed(est, 500, [0, 0, 0], f_pad, t0=-1.0)
+    if pad_gnss is not None:
+        est.update_gnss(pad_gnss)
+    _feed(est, 10, [0, 0, 0], [60.0, 0, 0], t0=t)
+    return est
+
+
+@pytest.mark.parametrize("azimuth", [0.0, 90.0, 225.0])
+@pytest.mark.parametrize("lean", [(0.0, 1.0), (1.0, 0.0), (-0.6, 0.8)])
+def test_estimator_aligns_heading_with_the_rail(azimuth, lean):
+    est = _launched_estimator(rail_azimuth_deg=azimuth, lean_dir_body=lean)
+    assert est.heading_aligned
+    axis = est.R[:, 0]
+    a = math.radians(azimuth)
+    assert axis[:2] / np.linalg.norm(axis[:2]) == pytest.approx([math.sin(a), math.cos(a)], abs=1e-6)
+    assert math.degrees(math.acos(axis[2])) == pytest.approx(5.0, abs=1e-6)
+
+
+def test_estimator_does_not_align_heading_on_a_near_vertical_rail():
+    est = _launched_estimator(rail_tilt_deg=2.0)
+    assert not est.heading_aligned
+
+
+def test_estimator_gnss_correction_uses_the_state_at_the_fix_time():
+    from rocket_dt.sensors import GnssSample
+    pad = GnssSample(-0.5, True, np.array([1.0, 2.0, 3.0]), np.zeros(3))  # the pad fix is the origin
+    est = _launched_estimator(pad_gnss=pad, gnss_gain_pos=0.5, gnss_gain_vel=0.0)
+    assert est.launched and est.gnss_fixes == 0
+    est.position[:] = 0.0
+    est._history.clear()
+    t = est._t_last
+    for k in range(50):  # coast at 10 m/s east, exactly
+        est._history.append((t + k * DT, np.array([10.0 * k * DT, 0, 0]), np.array([10.0, 0, 0])))
+    est.position = est._history[-1][1].copy()
+    t_fix = est._history[10][0]
+    true = np.array([10.0 * 10 * DT + 4.0, 0.0, 0.0])  # the estimate is 4 m short of the fix (at the fix time)
+    for _ in range(2):  # the second identical fix only closes half of what's left: no double counting
+        est.update_gnss(GnssSample(t_fix, True, true + [1.0, 2.0, 3.0], np.array([10.0, 0.0, 0.0])))
+    assert est.position[0] - 10.0 * 49 * DT == pytest.approx(4.0 * 0.75)
+    assert est.gnss_fixes == 2
+
+
+def test_pad_hold_steers_back_over_the_pad_and_falls_back_to_vertical(root):
+    from rocket_dt.controllers.pad_hold import PadHold
+    cfg = load_config(root / "configs/pad_hold.yaml")
+    sim = build_simulation(cfg)
+    ctrl = sim.controller
+    assert isinstance(ctrl, PadHold) and ctrl.has_gnss
+    ctrl.reset()
+    ctrl.est.heading_aligned = True
+    ctrl.est.velocity = np.array([0.0, 0.0, 100.0])
+    ctrl.est.position = np.array([10.0, 0.0, 500.0])  # 10 m east of the pad's vertical
+    t = ctrl.target_direction()
+    assert t[0] < 0 and abs(t[1]) < 1e-12  # leans west, back towards the axis
+    ctrl.est.position[:] = [0.0, 0.0, 500.0]
+    ctrl.est.velocity = np.array([0.0, -5.0, 100.0])  # over the pad but drifting south
+    assert ctrl.target_direction()[1] > 0
+    ctrl.est.heading_aligned = False  # no usable horizontal position: vertical_hold
+    assert ctrl.target_direction() == pytest.approx([0.0, 0.0, 1.0])
+
+
+@pytest.mark.slow
+def test_pad_hold_keeps_the_rocket_over_the_pad(root):
+    d = build_simulation(load_config(root / "configs/pad_hold.yaml")).run().data
+    i = int(np.argmax(d["z"]))
+    assert d["ctrl_guiding"][i] == 1.0 and d["ctrl_gnss_fixes"][i] > 100
+    assert math.hypot(d["x"][i], d["y"][i]) < 10.0  # vertical_hold: ~95 m in the same scenario

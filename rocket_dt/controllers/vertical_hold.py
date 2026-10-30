@@ -80,8 +80,9 @@ class VerticalHold(Controller):
             self.est.update_baro(s)
         est, p = self.est, self.p
         R = est.R
-        e = np.cross(R[:, 0], self.target)
-        self.tilt = math.atan2(float(np.linalg.norm(e)), float(R[:, 0] @ self.target))
+        target = self.target_direction()
+        e = np.cross(R[:, 0], target)
+        self.tilt = math.atan2(float(np.linalg.norm(e)), float(R[:, 0] @ target))
         V = est.speed
         self.active = est.launched and V > p.min_speed and est.velocity[2] > 0.0
         if not self.active:
@@ -98,6 +99,10 @@ class VerticalHold(Controller):
         d_roll = -p.k_roll * w[0] / V
         self.command = np.clip(d_roll - self.e_r @ u[1:], -self.max_d, self.max_d)
         return self.command
+
+    def target_direction(self) -> np.ndarray:
+        """Unit vector (estimated ENU) for the axis to point at. pad_hold.py overrides it."""
+        return self.target
 
     def telemetry(self) -> dict:
         return {"active": float(self.active), "tilt_est_deg": math.degrees(self.tilt),

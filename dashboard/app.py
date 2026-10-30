@@ -321,9 +321,9 @@ with st.sidebar.form("scenario"):
         if pc is not None:
             for f in dataclasses.fields(pc):
                 default = f.default if f.default is not dataclasses.MISSING else None
-                if not isinstance(default, (int, float)) or isinstance(default, bool):
-                    continue
                 cur = ctl.params.get(f.name, default) if kind == ctl.type else default
+                if not isinstance(cur, (int, float)) or isinstance(cur, bool):
+                    continue  # lists, flags and unset (None) values are left to the YAML
                 knob(f.name, f"controller.params.{f.name}", float(cur), st.number_input, format="%.4g")
     with st.expander("Canards (open loop)"):
         schedule = st.text_input("Roll deflection schedule  t:deg, …", value="", key=f"{cfg_name}:schedule",
@@ -402,6 +402,8 @@ kpi_cards([
     ("Max tilt", f"{np.degrees(d['zenith_angle'][after_rail].max()):.1f}°",
      "axis from vertical, rail exit → apogee", ACCENT["aero"]),
     ("Tilt at apogee", f"{np.degrees(d['zenith_angle'][i_apo]):.1f}°", "axis from vertical", ACCENT["aero"]),
+    ("Off pad axis at apogee", f"{math.hypot(d['x'][i_apo], d['y'][i_apo]):.1f} m",
+     f"max {np.hypot(d['x'][: i_apo + 1], d['y'][: i_apo + 1]).max():.1f} m to apogee", ACCENT["traj"]),
     ("Min margin", f"{min_margin:.2f} cal", "ascent", ACCENT["aero"]),
     ("Max roll, body", f"{np.degrees(np.abs(d['p']).max()):.0f}°/s", None, ACCENT["roll"]),
     ("Max roll, fin can", f"{np.degrees(np.abs(d['fincan_rate_abs']).max()):.0f}°/s", "inertial", ACCENT["roll"]),
@@ -675,7 +677,9 @@ with tabs[5]:
                        ("Min margin, worst", f"{mc.min_margin_cal.min():.2f} cal", None, ACCENT["aero"]),
                        ("Max body roll, worst", f"{mc.max_body_roll_dps.max():.0f}°/s", None, ACCENT["roll"]),
                        ("Rail exit, slowest", f"{mc.rail_exit_speed.min():.1f} m/s", None, ACCENT["speed"]),
-                       ("Max tilt, worst", f"{mc.max_tilt_deg.max():.1f}°", "rail exit → apogee", ACCENT["aero"])])
+                       ("Max tilt, worst", f"{mc.max_tilt_deg.max():.1f}°", "rail exit → apogee", ACCENT["aero"]),
+                       ("Off pad axis at apogee, worst", f"{mc.dist_apogee_m.max():.1f} m",
+                        f"mean {mc.dist_apogee_m.mean():.1f} m", ACCENT["traj"])])
             ends = simple_fig([go.Scatter(x=mc.east_end, y=mc.north_end, mode="markers", name="runs",
                                           marker=dict(color=mc.apogee, colorscale="Viridis", showscale=True, size=7),
                                           text=[f"run {r}" for r in mc.run]),
@@ -693,9 +697,11 @@ with tabs[5]:
             num = [c for c in mc.columns if c not in ("run",)]
             c1, c2 = st.columns(2)
             xa = c1.selectbox("Sensitivity: input", [c for c in num if c not in
-                                                     ("apogee", "t_apogee", "east_end", "north_end", "max_tilt_deg")],
+                                                     ("apogee", "t_apogee", "east_end", "north_end", "max_tilt_deg",
+                                                      "dist_apogee_m", "max_dist_m")],
                               index=0)
-            ya = c2.selectbox("Sensitivity: output", ["apogee", "max_tilt_deg", "max_aoa_deg", "max_body_roll_dps",
+            ya = c2.selectbox("Sensitivity: output", ["apogee", "max_tilt_deg", "dist_apogee_m", "max_dist_m",
+                                                      "max_aoa_deg", "max_body_roll_dps",
                                                       "max_fincan_roll_dps", "rail_exit_speed", "east_end",
                                                       "north_end"])
             chart(simple_fig([go.Scatter(x=mc[xa], y=mc[ya], mode="markers")], f"{ya} vs {xa}", xa, ya),

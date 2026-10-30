@@ -52,6 +52,8 @@ def _run_one(args) -> dict:
            "max_mach": float(d["mach"].max()),
            "max_aoa_deg": float(np.degrees(d["aoa"][:i_apo + 1][fast].max())),
            "max_tilt_deg": float(np.degrees(d["zenith_angle"][:i_apo + 1][after_rail].max())),
+           "dist_apogee_m": float(np.hypot(d["x"][i_apo], d["y"][i_apo])),
+           "max_dist_m": float(np.hypot(d["x"][:i_apo + 1], d["y"][:i_apo + 1]).max()),
            "min_margin_cal": float(np.nanmin(d["stability_cal"][:i_apo + 1])),
            "max_body_roll_dps": float(np.degrees(np.abs(d["p"][:i_apo + 1]).max())),
            "max_fincan_roll_dps": float(np.degrees(np.abs(d["fincan_rate_abs"][:i_apo + 1]).max())),

@@ -1,0 +1,45 @@
+# Example closed-loop flight: the pad_hold controller (rocket_dt/controllers/pad_hold.py) keeps the rocket
+# over the pad, i.e. it minimises the horizontal distance from the pad's vertical axis. Same scenario as
+# vertical_hold.yaml (5 deg rail, 4 m/s wind), with the GNSS receiver on: the position estimate needs it.
+extends: baseline.yaml
+
+launch:
+  angle_from_vertical_deg: 5.0    # also aligns the estimator's heading (needs >= min_align_tilt_deg)
+
+environment:
+  wind:
+    speed: 4.0
+
+sensors:
+  gnss:
+    enabled: true
+
+controller:
+  type: pad_hold
+  rate_hz: 100.0
+  params:
+    # guidance (target direction for the axis)
+    tau: 2.0                # s, time to return to the axis
+    k_v: 3.0                # extra tilt per unit of velocity error (per speed)
+    max_tilt_deg: 10.0      # limit of the target's tilt from vertical
+    # navigation (GNSS aiding)
+    gnss_gain_pos: 0.3
+    gnss_gain_vel: 0.5
+    min_align_tilt_deg: 4.0 # rail tilt below which the heading can't be aligned (then: hold vertical)
+    rail_tilt_deg: 5.0      # the rail as measured at the pad (the true rail is launch.*, dispersed below)
+    rail_azimuth_deg: 90.0
+    # attitude loop, as in vertical_hold.yaml
+    kp: 5.0
+    ki: 2.5
+    kd: 75.0
+    k_roll: 0.76
+    max_deflection_deg: 10.0
+    min_speed: 15.0
+
+simulation:
+  stop_at: apogee
+
+montecarlo:                       # baseline's dispersions, with the rail around its 5 deg set-up
+  dispersions:
+    launch.angle_from_vertical_deg: {dist: normal, mean: 5.0, sigma: 0.5}
+    launch.azimuth_deg: {dist: normal, mean: 90.0, sigma: 3.0}
