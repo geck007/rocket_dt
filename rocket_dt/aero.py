@@ -11,10 +11,15 @@ same lift model rather than from separate empirical damping terms:
   form CN = CN_alpha/2 * sin(2a) cos(a/2) (reverses sign in reverse flow).
 * Body lift: crossflow term K * A_plan * sin^2(alpha) (K = 1.1), integrated over
   axial slices of the whole body, which also yields the body's pitch damping.
-* Fins (incl. canards): per-fin Diederich lift slope with body interference
-  K_T = 1 + r/(s + r), at the MAC quarter chord. Each fin is split into spanwise
-  strips so roll rate produces a linearly varying local angle of attack (roll
-  damping) and per-fin deflections produce roll (and pitch/yaw) control moments.
+* Fins (incl. canards): per-fin Diederich lift slope at the MAC quarter chord. Each
+  fin is split into spanwise strips so roll rate produces a linearly varying local
+  angle of attack (roll damping) and per-fin deflections produce roll (and pitch/yaw)
+  control moments. Interference (interference.py): the angle of attack of the body
+  is multiplied by Barrowman's K_T = 1 + r/(s + r); fin deflections (canard commands,
+  cant, misalignment) by the slender-body load matrix (k_W(B) on the fin itself plus
+  fin-fin terms); the roll-rate term by the slender-body roll-damping factor. A deflected
+  canard also loads the body (carry-over k_B(W), times ``aero.canard_body_carryover``
+  for the hinge gap); that force acts at the canard station and carries no roll moment.
   Beyond small angles each strip follows CN = CN_alpha sin(a)cos(a) +
   C_dc (A_fin/A_ref) sin(a)|sin(a)| (linear lift + flat-plate crossflow), so the
   fins keep producing a physically sized restoring force up to 90 deg instead of
@@ -22,9 +27,9 @@ same lift model rather than from separate empirical damping terms:
   spurious stable tail-first trim during ballistic descent).
 * Canard vortices (optional, ``aero.canard_vortex.model: vortex``): each canard
   panel sheds one rolled-up tip vortex whose circulation follows from that panel's
-  own normal force (Kutta-Joukowski with the body image system),
-  Gamma_i = F_i / (rho V (r_v - R^2/r_v)), at r_v = R + (pi/4) s (elliptic loading
-  centroid). The vortex and its image inside the body (R^2/r_v, -Gamma_i) are
+  own normal force plus its body carry-over (Kutta-Joukowski with the body image
+  system), Gamma_i = F_i / (rho V (r_v - R^2/r_v)), at r_v = R + (pi/4) s (elliptic
+  loading centroid). The vortex and its image inside the body (R^2/r_v, -Gamma_i) are
   carried to each fin set aft of the canards: the radius is mapped so that the
   annulus between body and vortex keeps its area, the body rolls under the vortex
   during the convection time dx/u, and the crossflow drifts it by -v_cross dx/u.
@@ -52,6 +57,7 @@ import numpy as np
 
 from rocket_dt.config import CanardVortexConfig
 from rocket_dt.geometry import BodyProfile, FinPlanform, fin_planform, sample_body
+from rocket_dt.interference import panel_interference
 from rocket_dt.io.ork import FINISH_ROUGHNESS, FinSet, OrkRocket, SymmetricComponent, reference_length, rocket_length
 from rocket_dt.mass import fin_angles, fin_root_radius
 
@@ -94,13 +100,19 @@ class FinSetAero:
     ref_area: float
     root_le_station: float  # station of the root leading edge
     outline: np.ndarray  # planform polygon (x from root LE, y span), for drawing
-    interference: float = field(init=False)
+    carryover: float = 0.0  # body load per unit deflection, / isolated fin load (canards only)
+    interference: float = field(init=False)  # K_T, for the body's angle of attack
+    deflection_matrix: np.ndarray = field(init=False)  # fin loads per unit fin deflection
+    roll_damping: float = field(init=False)  # roll-rate interference factor
     _rho: np.ndarray = field(init=False)
     _w: np.ndarray = field(init=False)
 
     def __post_init__(self):
         s = self.planform.span
         self.interference = 1.0 + self.root_radius / (s + self.root_radius)
+        pi = panel_interference(self.root_radius, s, self.count)
+        self.deflection_matrix, self.roll_damping = pi.load_matrix, pi.roll_damping
+        self.carryover *= pi.carryover
         self._rho = self.root_radius + self.planform.y
         self._w = self.planform.chord * self.planform.dy / self.planform.area
 
@@ -139,7 +151,7 @@ class AeroModel:
     def __init__(self, ork: OrkRocket, fincan_paths: set[str], canard_path: str | None,
                  fin_misalignment: dict[str, list[float]], drag_scale: float = 1.0,
                  canard_vortex: CanardVortexConfig | None = None, canard_hinge: float | None = None,
-                 slice_length: float = 0.025):
+                 canard_body_carryover: float = 1.0, slice_length: float = 0.025):
         self.ref_length = reference_length(ork)
         self.ref_area = math.pi * self.ref_length ** 2 / 4.0
         self.length = rocket_length(ork)
@@ -194,7 +206,8 @@ class AeroModel:
                 root_radius=fin_root_radius(fs), planform=pf, thickness=fs.thickness,
                 cross_section=fs.cross_section, roughness=FINISH_ROUGHNESS[fs.finish], angles=fin_angles(fs),
                 cant=fs.cant + mis, on_fincan=_in_subtree(fs, fincan_paths), is_canard=fs.path == canard_path,
-                ref_area=self.ref_area, root_le_station=fs.x_top, outline=np.asarray(fs.planform, dtype=float)))
+                ref_area=self.ref_area, root_le_station=fs.x_top, outline=np.asarray(fs.planform, dtype=float),
+                carryover=canard_body_carryover if fs.path == canard_path else 0.0))
         if canard_path is not None and next(f for f in self.fins if f.is_canard).on_fincan:
             raise ValueError("The canards cannot be part of the fin can")
         self.n_canards = next((f.count for f in self.fins if f.is_canard), 0)
@@ -371,9 +384,9 @@ class AeroModel:
             delta = f.cant.copy()
             if f.is_canard and canard_deflection is not None:
                 delta = delta + canard_deflection
-            k = f.interference
-            alpha = (k * (np.arctan2(vn, ua) - delta * math.copysign(1.0, u)))[:, None] \
-                + np.arctan2(p_eff * f._rho[None, :], ua)
+            sgn = math.copysign(1.0, u)
+            alpha = (f.interference * np.arctan2(vn, ua) - sgn * (f.deflection_matrix @ delta))[:, None] \
+                + f.roll_damping * np.arctan2(p_eff * f._rho[None, :], ua)
             d_alpha = None
             if vortex and vortices is not None and id(f) in self._vortex_targets:
                 d_alpha = self._vortex_alpha(vortices, f, phi, v_b, omega_b, cg_station)
@@ -385,11 +398,17 @@ class AeroModel:
                         vortex_roll_each[i] += self._strip_loads(f, alpha + d_alpha[i], beta, q)[2] - roll0
             else:
                 strip_f, fn, roll = self._strip_loads(f, alpha, beta, q)
-            force[1] += -float(sphi @ fn)
-            force[2] += float(cphi @ fn)
+            if f.carryover:
+                # body carry-over of the deflected fins: along each fin normal, no roll moment
+                carry = sgn * f.carryover * q * self.ref_area * f.cn_alpha_single(beta) * delta
+                fn_total = fn + carry
+            else:
+                fn_total = fn
+            force[1] += -float(sphi @ fn_total)
+            force[2] += float(cphi @ fn_total)
             # r_cp x̂ × (fn n̂) = -r_cp fn ê_r
-            moment[1] += -r_cp * float(fn @ cphi)
-            moment[2] += -r_cp * float(fn @ sphi)
+            moment[1] += -r_cp * float(fn_total @ cphi)
+            moment[2] += -r_cp * float(fn_total @ sphi)
             moment[0] += roll
             if f.on_fincan:
                 fincan_roll += roll
@@ -398,7 +417,7 @@ class AeroModel:
                 hinge = strip_f @ self._hinge_arm
                 if self._vortex_targets and u > 1e-3:
                     r_v = f.root_radius + 0.25 * math.pi * f.planform.span
-                    gamma = self.vortex.strength_factor * fn / (rho * V * (r_v - f.root_radius ** 2 / r_v))
+                    gamma = self.vortex.strength_factor * fn_total / (rho * V * (r_v - f.root_radius ** 2 / r_v))
                     vortices = _Vortices(gamma, phi, r_v, f.root_radius, f.station_cp)
 
         # --- axial force

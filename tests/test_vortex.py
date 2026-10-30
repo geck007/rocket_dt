@@ -47,9 +47,10 @@ def test_vortex_roll_opposes_canard_roll_and_depends_on_fincan_angle(rocket):
     ang = np.radians([0.0, 22.5, 45.0, 67.5, 90.0])
     m = rocket.aero.vortex_roll_map(0.3, ang, np.radians([1.0] * 4))
     ratio = m["induced"] / m["canard"]
-    # roll reversal of slender-body size: strongest with the vortices between the fins
-    assert -1.2 < ratio[2] < -0.8
-    assert -1.0 < ratio[0] < -0.4 and ratio[0] > ratio[2]
+    # roll reversal of slender-body size, strongest with the vortices between the fins: there the fin
+    # can gets a larger roll moment than the canards give the body
+    assert -1.6 < ratio[2] < -1.1
+    assert -1.1 < ratio[0] < -0.6 and ratio[0] > ratio[2]
     assert ratio[0] == pytest.approx(ratio[4], rel=1e-9)  # 4 fins: period 90 deg
     assert ratio[1] == pytest.approx(ratio[3], rel=1e-9)  # mirror symmetry about 45 deg
 
@@ -71,8 +72,10 @@ def test_single_canard_effect_rotates_with_the_canard(rocket, fincan_deg):
     assert np.linalg.norm(df0[1:]) > 0.05  # a single canard's vortex also pushes the fins sideways
     assert np.allclose(df1, rot @ df0, atol=1e-9)
     assert np.allclose(dm1, rot @ dm0, atol=1e-9)
-    assert on1.diag["vortex_roll_moment_each"][1] == pytest.approx(on0.diag["vortex_roll_moment_each"][0])
-    assert on0.diag["vortex_roll_moment_each"][1:] == pytest.approx([0, 0, 0], abs=1e-12)
+    each0 = on0.diag["vortex_roll_moment_each"]
+    assert on1.diag["vortex_roll_moment_each"][1] == pytest.approx(each0[0])
+    # the undeflected neighbours are loaded slightly the other way (fin-fin interference) and shed weak vortices
+    assert np.all(np.sign(each0[1:]) == -np.sign(each0[0])) and np.all(np.abs(each0[1:]) < 0.1 * abs(each0[0]))
 
 
 def test_per_canard_contributions_add_up(rocket):

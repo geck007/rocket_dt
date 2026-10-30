@@ -36,8 +36,9 @@ class Wind:
     def update_turbulence(self, dt: float, h_agl: float, airspeed: float) -> None:
         """Advance the gust state by dt (held constant within an integration step).
 
-        Dryden-type first-order shaping filters per axis (MIL-F-8785C low-altitude
-        scale lengths), driven by the distance flown through the air.
+        Dryden-type first-order shaping filters per axis, driven by the distance flown
+        through the air. MIL-F-8785C scale lengths: the low-altitude forms below 1000 ft,
+        1750 ft above 2000 ft, linearly interpolated in between.
         """
         t = self.cfg.turbulence
         if t.model == "none":
@@ -45,14 +46,13 @@ class Wind:
         u_mean = self.mean_speed(h_agl)
         sigma_w = t.intensity * u_mean
         h_ft = max(h_agl, 3.0) / 0.3048
-        if h_ft < 1000.0:
-            k = 0.177 + 0.000823 * h_ft
-            sigma_u = sigma_w / k ** 0.4
-            L_u = h_ft / k ** 1.2 * 0.3048
-            L_w = h_ft * 0.3048
-        else:
-            sigma_u = sigma_w
-            L_u = L_w = 533.0
+        k = 0.177 + 0.000823 * min(h_ft, 1000.0)
+        sigma_u = sigma_w / k ** 0.4  # = sigma_w from 1000 ft up
+        L_u, L_w = min(h_ft, 1000.0) / k ** 1.2, min(h_ft, 1000.0)
+        if h_ft > 1000.0:
+            f = min((h_ft - 1000.0) / 1000.0, 1.0)
+            L_u, L_w = L_u + f * (1750.0 - L_u), L_w + f * (1750.0 - L_w)
+        L_u, L_w = L_u * 0.3048, L_w * 0.3048
         sig = np.array([sigma_u, sigma_u, sigma_w])
         L = np.array([L_u, L_u, L_w])
         a = np.exp(-max(airspeed, 1.0) * dt / L)

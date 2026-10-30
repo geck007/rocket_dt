@@ -13,10 +13,10 @@ controller:
   type: vertical_hold
   rate_hz: 100.0
   params:
-    kp: 4.0                 # canard-pair deflection per rad of tilt
-    ki: 2.0
-    kd: 60.0                # m (rate damping = kd / speed)
-    k_roll: 0.36            # m (roll damping = k_roll / speed)
+    kp: 5.0                 # canard-pair deflection per rad of tilt
+    ki: 2.5
+    kd: 75.0                # m (rate damping = kd / speed)
+    k_roll: 0.76            # m (roll damping = k_roll / speed)
     max_deflection_deg: 10.0
     min_speed: 15.0
 

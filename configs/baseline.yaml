@@ -48,6 +48,10 @@ aero:
     strength_factor: 1.0                # PLACEHOLDER calibration until CFD / flight data
     core_radius: 0.006                  # m, ~0.1 x canard span
     roll_lag: true
+  # Share of the slender-body body carry-over load (k_B(W) = 0.50 for these canards) that a deflected
+  # canard really puts on the body: 1 = sealed root, 0 = large hinge gap. PLACEHOLDER until wind tunnel /
+  # flight data; it sets the canard pitch/yaw authority within about +-20 % (no effect on roll).
+  canard_body_carryover: 0.5
 
 # Canard servos (one per canard) - all values are PLACEHOLDERS until bench tests of the real servo.
 actuators:
@@ -126,5 +130,6 @@ montecarlo:
     disturbances.thrust_scale: {dist: normal, mean: 1.0, sigma: 0.03}
     disturbances.drag_scale: {dist: normal, mean: 1.0, sigma: 0.05}
     aero.canard_vortex.strength_factor: {dist: uniform, low: 0.5, high: 1.5}
+    aero.canard_body_carryover: {dist: uniform, low: 0.0, high: 1.0}
     disturbances.fin_misalignment_deg.motor case transition/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.2, size: 4}
     disturbances.fin_misalignment_deg.canards bay body/Trapezoidal Fin Set: {dist: normal, mean: 0.0, sigma: 0.1, size: 4}

@@ -235,7 +235,9 @@ with st.sidebar.form("scenario"):
                  st.number_input, min_value=0.0, step=0.005, format="%.4f")
             knob("Bearing viscous coeff. [N m s/rad]", "rocket.fin_can.bearing.viscous_coeff",
                  fc.bearing.viscous_coeff, st.number_input, min_value=0.0, step=1e-4, format="%.5f")
-    with st.expander("Canard vortices"):
+    with st.expander("Canard aerodynamics"):
+        knob("Body carry-over share (0 = hinge gap, 1 = sealed root)", "aero.canard_body_carryover",
+             c.aero.canard_body_carryover, st.slider, min_value=0.0, max_value=1.0, step=0.05)
         cv = c.aero.canard_vortex
         knob("Canard vortex model", "aero.canard_vortex.model", cv.model,
              lambda label, value, **k: st.selectbox(label, ["none", "vortex"],

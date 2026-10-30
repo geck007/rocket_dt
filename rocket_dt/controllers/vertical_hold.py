@@ -20,9 +20,12 @@ effect at any speed. The rotational frequency grows with speed, so the rate damp
 divided by the speed V. The integral is kept in the ENU frame so the body's roll does
 not mix its axes, and it is limited to max_deflection.
 
-Tuning notes (current .ork, Mach 0.3): one canard gives about 0.0101 q N m/rad of pitch
-moment; the aerodynamic restoring moment is about 0.048 q N m per rad of angle of attack.
-So kp = 4 makes the canards about 1.7 times stiffer than the rocket's own weathercocking.
+Tuning notes (current .ork, Mach 0.3, liftoff CG): one canard gives about 0.0080 q N m/rad
+of pitch moment, including its downwash on the tail and half the slender-body body
+carry-over (``aero.canard_body_carryover`` 0.5; 0.0063 with none, 0.0097 with all of it).
+The aerodynamic restoring moment is about 0.048 q N m per rad of angle of attack, so
+kp = 5 makes the canards about 1.7 times stiffer than the rocket's own weathercocking. All
+four canards give about 0.29 N m of roll per degree at 100 m/s.
 """
 
 from __future__ import annotations
@@ -40,10 +43,10 @@ from rocket_dt.controllers.estimation import StrapdownEstimator
 class Params:
     imu: str = "imu0"  # preferred IMU; the first enabled IMU is used if this one is disabled
     target_direction: list[float] = field(default_factory=lambda: [0.0, 0.0, 1.0])  # ENU; default straight up
-    kp: float = 4.0  # rad of pair deflection per rad of tilt
-    ki: float = 2.0  # per rad s of tilt
-    kd: float = 60.0  # m: rate damping = kd / V rad per rad/s
-    k_roll: float = 0.36  # m: roll damping = k_roll / V rad per rad/s
+    kp: float = 5.0  # rad of pair deflection per rad of tilt
+    ki: float = 2.5  # per rad s of tilt
+    kd: float = 75.0  # m: rate damping = kd / V rad per rad/s
+    k_roll: float = 0.76  # m: roll damping = k_roll / V rad per rad/s
     max_deflection_deg: float = 10.0
     min_speed: float = 15.0  # m/s, estimated speed above which control is active (off the rail)
 

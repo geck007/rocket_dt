@@ -128,6 +128,9 @@ class CanardVortexConfig:
 @dataclass
 class AeroConfig:
     canard_vortex: CanardVortexConfig = field(default_factory=CanardVortexConfig)
+    # fraction of the slender-body body carry-over load of a deflected canard that the body really
+    # gets: 1 = sealed root, less with a hinge gap between the canard root and the body
+    canard_body_carryover: float = 1.0
 
 
 @dataclass
@@ -394,6 +397,8 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("aero.canard_vortex.model must be 'none' or 'vortex'")
     if cv.strength_factor < 0 or cv.core_radius <= 0:
         raise ConfigError("aero.canard_vortex: strength_factor must be >= 0 and core_radius > 0")
+    if not 0.0 <= cfg.aero.canard_body_carryover <= 1.0:
+        raise ConfigError("aero.canard_body_carryover must be in [0, 1]")
     act = cfg.actuators.canards
     if act.model not in ("ideal", "servo"):
         raise ConfigError("actuators.canards.model must be 'ideal' or 'servo'")

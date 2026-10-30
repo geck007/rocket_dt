@@ -103,7 +103,8 @@ def build_rocket(cfg: Config) -> RocketModel:
 
     aero = AeroModel(ork, {r.path for r in fincan_roots}, cfg.rocket.canards,
                      cfg.disturbances.fin_misalignment_deg, cfg.disturbances.drag_scale,
-                     cfg.aero.canard_vortex, cfg.actuators.canards.hinge_from_root_le)
+                     cfg.aero.canard_vortex, cfg.actuators.canards.hinge_from_root_le,
+                     cfg.aero.canard_body_carryover)
     cna, cp = aero.static_cp(0.3)
     notes.append(f"AERO ref diameter {aero.ref_length:.4f} m, length {aero.length:.4f} m; at M 0.3: "
                  f"CN_alpha {cna:.2f}/rad, CP station {cp:.4f} m, static margin "

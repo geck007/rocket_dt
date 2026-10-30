@@ -88,9 +88,12 @@ def _hinge(rk, delta_deg, v_b=(100.0, 0.0, 0.0)):
 
 
 def test_hinge_at_centroid_is_aft_of_cp_so_load_increases_deflection(rocket):
-    h = _hinge(rocket, [1.0, -1.0, 0.0, 2.0])
-    assert h[0] > 0 and h[1] < 0 and h[2] == 0.0
-    assert h[3] == pytest.approx(2 * h[0], rel=0.03)  # nearly linear
+    h = _hinge(rocket, [1.0, 0.0, 0.0, 0.0])
+    assert h[0] > 0
+    # the neighbours of a deflected canard are loaded the other way (fin-fin interference), much less
+    assert h[1] == pytest.approx(h[3]) and -0.15 * h[0] < h[1] < 0 and -0.15 * h[0] < h[2] < 0
+    assert _hinge(rocket, [2.0, 0.0, 0.0, 0.0])[0] == pytest.approx(2 * h[0], rel=0.03)  # nearly linear
+    assert _hinge(rocket, [-1.0, 0.0, 0.0, 0.0])[0] == pytest.approx(-h[0])
     assert rocket.aero.canard_hinge == pytest.approx(rocket.aero.fins[0].planform.centroid_x)
 
 

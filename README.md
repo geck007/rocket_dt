@@ -66,9 +66,10 @@ tests/
 | Static margin | 1.84 cal at liftoff, 1.8–2.2 cal during the ascent |
 | Avionics | 2 IMUs, a barometer; GNSS configured but switched off |
 
-Baseline flight (vertical rail, 2 m/s wind, no controller): apogee **1795 m** at 19.2 s, max speed 209 m/s
+Baseline flight (vertical rail, 2 m/s wind, no controller): apogee **1793 m** at 19.2 s, max speed 209 m/s
 (Mach 0.62), max acceleration 11.7 g, rail exit at 14.2 m/s. Without control the rocket turns into the wind
-and is 30° off vertical by apogee. With the example controller it stays within about 7° on a 5° rail in 4 m/s wind.
+and is 45° off vertical by apogee (36° with ideal servos: with zero command, a canard resting against its
+backlash is enough to steer it). With the example controller it stays within about 7° on a 5° rail in 4 m/s wind.
 
 ## Dashboard
 
@@ -202,8 +203,9 @@ controller:
 * **Units:** commands are in radians and limited to ±`actuators.canards.limit_deg`.
 * **Gain scheduling:** canard force and the rocket's own aerodynamic stiffness both scale with dynamic
   pressure q. Gains expressed as "degrees of deflection per degree of tilt" therefore work at any speed;
-  rate damping should scale with 1/speed. One canard gives about 0.0101·q N m of pitch moment per rad.
-  The restoring moment is about 0.048·q N m per rad of angle of attack.
+  rate damping should scale with 1/speed. One canard gives about 0.0080·q N m of pitch moment per rad
+  (0.0063–0.0097 over the range of `aero.canard_body_carryover`). The restoring moment is about
+  0.048·q N m per rad of angle of attack. All four canards give ≈ 0.29 N m of roll per degree at 100 m/s.
 * **Empty sample lists:** a disabled sensor produces no samples, and samples arrive at each sensor's own
   rate. Expect empty lists and missing names.
 * **Telemetry keys:** `telemetry()` must return the same keys on every call.
@@ -239,8 +241,11 @@ The controller:
 | | No controller | `vertical_hold` |
 |---|---|---|
 | Max tilt from vertical | 88° | 7° |
-| Drift at apogee | 541 m | 98 m |
-| Apogee | 1738 m | 1786 m |
+| Drift at apogee | 505 m | 95 m |
+| Apogee | 1747 m | 1785 m |
+
+The gains hold up across the canard-authority uncertainty: max tilt is 7.6° with no body carry-over and
+6.8° with all of it.
 
 The price is a higher angle of attack just off the rail (≈ 11°). Holding the rocket vertical at low speed
 means not turning into the wind.
@@ -264,7 +269,7 @@ means not turning into the wind.
 | Grain geometry and order | openMotor `.ric` | Cross-checked against the CSV grain masses |
 | Loaded motor mass, case diameter/length | `.eng` header | `.eng` thrust and propellant mass are only cross-checked |
 | Launch site, wind, atmosphere, disturbances, integrator | YAML | Simulation settings stored in the .ork are ignored |
-| Canard vortex model | YAML `aero.canard_vortex` | |
+| Canard vortex model, canard body carry-over | YAML `aero.canard_vortex`, `aero.canard_body_carryover` | |
 | Canard servos and hinge line | YAML `actuators.canards` | |
 | Sensors | YAML `sensors` | Each one has `enabled`; GNSS is off in the baseline |
 | Controller | YAML `controller` (`type`, `rate_hz`, `params`) | Types are registered in `rocket_dt/controllers/__init__.py` |
@@ -289,12 +294,19 @@ that share a name.
   evaluated with the local flow at every lifting element, so pitch and roll damping come out of the lift model.
   * Nose and transitions: slender-body CNα, in Jorgensen's form for large α.
   * Body crossflow lift (K = 1.1), over 2.5 cm slices.
-  * Fins and canards: per-fin Diederich lift slope with K_T body interference, in spanwise strips, plus a
-    flat-plate term at high α.
+  * Fins and canards: per-fin Diederich lift slope, in spanwise strips, plus a flat-plate term at high α.
+  * Fin interference (`interference.py`):
+    * Angle of attack of the body uses Barrowman's K_T = 1 + r/(s+r), as OpenRocket does.
+    * Fin deflections (canard commands, cant, misalignment) and roll rate use slender-body factors,
+      computed at build time for each fin set's r/s and fin count. For the canards these are: own
+      load 0.90 (K_T would give 1.48), all four in roll 0.70, a pitch pair 0.94 plus 0.50 carried by the
+      body, and roll damping 0.71.
+    * The body carry-over of a deflected canard is scaled by `aero.canard_body_carryover`, since a hinge
+      gap at the canard root loses part of it.
   * Drag buildup: skin friction with a roughness limit, pressure drag, fin edge drag by cross-section, base
     drag, and OpenRocket's axial-force-vs-α multiplier.
   * Canard vortices (`aero.canard_vortex`): one tip vortex per canard, with its strength set by that canard's
-    lift. It and its image in the body are carried to the tail fins (roll lag, crossflow drift, Lamb–Oseen core)
+    lift plus its body carry-over. It and its image in the body are carried to the tail fins (roll lag, crossflow drift, Lamb–Oseen core)
     and change every fin strip's angle of attack. The effect is resolved for each canard–fin pair, depends on the
     fin-can angle, and includes the downwash that `static_cp` reports.
   * Canard hinge moments: each strip's force acts at its local quarter chord, about the hinge line.
@@ -354,25 +366,27 @@ Component masses match OpenRocket to better than 0.001 %. Known, intended differ
 | Barometer | MS5611-class, static-port error 0 | datasheet; static-port coefficient from flight data |
 | GNSS | M10-class, off | the chosen receiver's dynamics limits |
 | Canard vortex strength / core radius | factor 1.0 / 6 mm (dispersed 0.5–1.5 in Monte Carlo) | CFD, or fin-can spin under a known canard offset in flight |
-| `vertical_hold` gains | kp 4, ki 2, kd 60 m, k_roll 0.36 m | tuning against the measured servo and sensors |
+| Canard body carry-over | 0.5 of the slender-body value (dispersed 0–1 in Monte Carlo) | the hinge gap; wind tunnel or the pitch response to a canard step in flight |
+| `vertical_hold` gains | kp 5, ki 2.5, kd 75 m, k_roll 0.76 m | tuning against the measured servo and sensors |
 
 ## Findings so far
 
 * **Static margin is 1.8–2.2 cal** during the ascent. Canard downwash on the tail costs ≈ 0.14 cal.
 * **Roll authority is very high with a free fin can.** The canards are the body's only roll damping, so
-  0.1° of canard misalignment gives ≈ 300 °/s of body roll, and 5° gives ≈ 11,000 °/s. Servo resolution,
+  0.1° of canard misalignment gives ≈ 150 °/s of body roll, and 5° gives ≈ 9,000 °/s. Servo resolution,
   backlash and canard zero offset matter a lot.
 * **The hinge moment pushes the canards away from neutral.** The canard's CP is 16 mm ahead of a centroid hinge.
-  * With the placeholder servo, a 0.5° command becomes ≈ 0.70° in flight: servo compliance plus half the
-    backlash.
+  * With the placeholder servo, a 0.5° command becomes ≈ 0.72° in flight: quantisation to 0.54°, half the
+    backlash and servo compliance.
   * Even with zero command, angle-of-attack loads hold the canards at ≈ ±0.17° inside the backlash.
   * A hinge about 38 mm aft of the root LE (at the CP) would remove most of the load.
 * **Canard vortices reverse the roll on the tail.**
-  * The torque they induce on the fin can is −0.65× the canard roll moment with the fins in line with the
-    canards, and −1.0× with the vortices midway between fins.
+  * The torque they induce on the fin can is −0.87× the canard roll moment with the fins in line with the
+    canards, and −1.35× with the vortices midway between fins.
   * The free fin can absorbs this, so it is kicked the opposite way during canard transients, while the
     body's roll response is unchanged.
-  * Limitation: one vortex per canard, carrying only its net lift.
+  * Limitation: one vortex per canard, whose strength comes from an impulse balance (lift plus body
+    carry-over). Slender-body theory puts the circulation shed at the root within ≈ 20 % of it.
 * **Without recovery events the descent is ballistic and very sensitive.** The rocket falls broadside and small
   canard deflections tip it nose-first. Only the ascent results are meaningful.
 
