@@ -33,6 +33,29 @@ def test_controller_config_is_strict(root):
         make_controller(parse_config(bad, root / "configs"), rk)
 
 
+def test_airframe_constants(root):
+    raw = load_raw(root / "configs/vertical_hold.yaml")
+    from rocket_dt.builder import build_rocket
+    rk = build_rocket(parse_config(copy.deepcopy(raw), root / "configs"))
+    p = make_controller(parse_config(copy.deepcopy(raw), root / "configs"), rk).p
+    assert p.Sref == pytest.approx(rk.aero.ref_area)
+    assert p.X_cp == pytest.approx(p.sum_CNaX / p.CNa_tot)
+    assert p.X_cp_can < 0.0 < p.X_cp  # canards ahead of the CG, rocket stable without them
+    assert p.CNa_can > 0.0 and p.Y_cp_can > rk.aero.ref_length / 2
+    # the full model adds the canards' downwash on the tail fins, which lowers the total a little
+    cna_full, _ = rk.aero.static_cp(p.model_mach)
+    assert 0.85 < cna_full / (p.CNa_tot + p.CNa_can) < 1.0
+    dry = rk.mass.at(1e3)
+    assert p.mass == pytest.approx(dry.mass) and p.inertia.shape == (3, 3)
+    np.testing.assert_allclose(p.inertia, dry.inertia)
+    raw["controller"]["params"] |= {"CNa_can": 3.0, "inertia": [[0.05, 0, 0], [0, 6, 0], [0, 0, 6]]}
+    p = make_controller(parse_config(copy.deepcopy(raw), root / "configs"), rk).p
+    assert p.CNa_can == 3.0 and p.inertia[1, 1] == 6.0  # config values win
+    raw["controller"]["params"]["inertia"] = [[1.0, 0.0]]
+    with pytest.raises(ConfigError, match="3x3"):
+        make_controller(parse_config(raw, root / "configs"), rk)
+
+
 def _feed(est, n, gyro, accel, t0=0.0):
     for k in range(n):
         est.update_imu(ImuSample(t=t0 + k * DT, accel=np.asarray(accel, float), gyro=np.asarray(gyro, float)))

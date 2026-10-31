@@ -188,6 +188,37 @@ controller:
 Sample lists can be empty: disabled sensors produce nothing, and each sensor runs at its own rate.
 `telemetry()` has to return the same keys on every call.
 
+### Airframe constants
+
+For designing a control law, a `Params` that inherits `AirframeParams` gets the airframe's linear
+(Barrowman) constants as fields, filled in from the simulated rocket:
+
+```python
+from rocket_dt.controllers.airframe import AirframeParams
+
+@dataclass
+class Params(AirframeParams):
+    gain: float = 1.0
+# in the controller: self.p.CNa_tot, self.p.X_cp, self.p.inertia, ...
+```
+
+| Field | Current rocket | |
+|---|---|---|
+| `Sref` | 0.01327 m² | reference area |
+| `CNa_tot` | 13.6 /rad | nose, transitions and tail fins, without the canards |
+| `sum_CNaX` | 5.67 m/rad | Σ CNa_i·X_i over the same components, X_i = S_cp,i − S_cg |
+| `X_cp` | 0.416 m | S_cp − S_cg without the canards (= `sum_CNaX / CNa_tot`) |
+| `CNa_can` | 2.31 /rad | canard set alone |
+| `X_cp_can` | −0.389 m | S_cp − S_cg of the canards (ahead of the CG) |
+| `Y_cp_can` | 0.091 m | radial arm of a canard's CP from the axis |
+| `mass`, `inertia` | 16.5 kg, 3×3 array | dry (after burnout), about the CG, body axes |
+
+Lift slopes are per rad, referenced to `Sref`, at `model_mach` (default 0.3). Four fins count as the two
+that lift in a pitch plane. A value set in the config's `params` replaces the computed one. These numbers
+come from the simulation's own model, so they are better than a real rocket's estimates. They are also
+simplified: one Mach number, dry CG (the CG is further aft during the boost), no body crossflow lift, no canard
+downwash on the tail fins, no roll damping. `vertical_hold` and `pad_hold` have these fields but don't use them.
+
 ### Conventions
 
 * **Body frame:** +x out of the nose, origin at the nose tip; station s is at x = −s.

@@ -36,11 +36,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from rocket_dt.control import Controller, ControllerInput
+from rocket_dt.controllers.airframe import AirframeParams
 from rocket_dt.controllers.estimation import StrapdownEstimator
 
 
 @dataclass
-class Params:
+class Params(AirframeParams):  # airframe constants (Sref, CNa_tot, ...): see airframe.py; not used here
     imu: str = "imu0"  # preferred IMU; the first enabled IMU is used if this one is disabled
     target_direction: list[float] = field(default_factory=lambda: [0.0, 0.0, 1.0])  # ENU; default straight up
     kp: float = 5.0  # rad of pair deflection per rad of tilt

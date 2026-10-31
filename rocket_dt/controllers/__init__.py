@@ -7,6 +7,10 @@ The module needs
 * ``Params``: a dataclass whose fields are the config's ``controller.params``
 * ``CONTROLLER``: a ``Controller`` subclass whose constructor takes ``(rocket, cfg, params)``
 
+A ``Params`` that inherits ``airframe.AirframeParams`` also gets the airframe's constants
+(reference area, lift slopes, CP arms, dry mass and inertia), computed from the rocket for
+any the config leaves unset.
+
 so adding a controller never touches a shared file. Modules without ``CONTROLLER``
 (helpers such as ``estimation.py``) are skipped.
 """
@@ -18,6 +22,7 @@ import pkgutil
 
 from rocket_dt.config import Config, ConfigError, build_dataclass
 from rocket_dt.control import Controller, NoControl
+from rocket_dt.controllers.airframe import AirframeParams, fill_airframe
 
 
 def _discover() -> dict:
@@ -53,6 +58,8 @@ def make_controller(cfg: Config, rocket) -> Controller:
         params = None
     else:
         params = build_dataclass(params_cls, c.params, "controller.params")
+        if isinstance(params, AirframeParams):
+            fill_airframe(params, rocket)
     ctrl = CONTROLLERS[c.type][1](rocket, cfg, params)
     ctrl.rate_hz = c.rate_hz
     return ctrl
