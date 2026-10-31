@@ -8,7 +8,7 @@ The module needs
 * ``CONTROLLER``: a ``Controller`` subclass whose constructor takes ``(rocket, cfg, params)``
 
 A ``Params`` that inherits ``airframe.AirframeParams`` also gets the airframe's constants
-(reference area, lift slopes, CP arms, dry mass and inertia), computed from the rocket for
+(reference area, lift slopes, CP arms, drag, mass and inertia) of the nominal rocket, for
 any the config leaves unset.
 
 so adding a controller never touches a shared file. Modules without ``CONTROLLER``
@@ -59,7 +59,7 @@ def make_controller(cfg: Config, rocket) -> Controller:
     else:
         params = build_dataclass(params_cls, c.params, "controller.params")
         if isinstance(params, AirframeParams):
-            fill_airframe(params, rocket)
+            fill_airframe(params, cfg, rocket)
     ctrl = CONTROLLERS[c.type][1](rocket, cfg, params)
     ctrl.rate_hz = c.rate_hz
     return ctrl

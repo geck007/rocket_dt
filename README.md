@@ -190,8 +190,9 @@ Sample lists can be empty: disabled sensors produce nothing, and each sensor run
 
 ### Airframe constants
 
-For designing a control law, a `Params` that inherits `AirframeParams` gets the airframe's linear
-(Barrowman) constants as fields, filled in from the simulated rocket:
+For designing a control law, a `Params` that inherits `AirframeParams` gets the airframe's constants as
+fields. They are computed from the .ork, the motor files and the config's `rocket` overrides each time a
+controller is built, so they follow any change to those files:
 
 ```python
 from rocket_dt.controllers.airframe import AirframeParams
@@ -199,25 +200,41 @@ from rocket_dt.controllers.airframe import AirframeParams
 @dataclass
 class Params(AirframeParams):
     gain: float = 1.0
-# in the controller: self.p.CNa_tot, self.p.X_cp, self.p.inertia, ...
+# in the controller: self.p.CNa_tot, self.p.sum_CNaX2, self.p.inertia, ...
 ```
 
 | Field | Current rocket | |
 |---|---|---|
-| `Sref` | 0.01327 m² | reference area |
+| `Sref`, `d_ref`, `length` | 0.01327 m², 0.130 m, 1.975 m | reference area and diameter, overall length |
 | `CNa_tot` | 13.6 /rad | nose, transitions and tail fins, without the canards |
-| `sum_CNaX` | 5.67 m/rad | Σ CNa_i·X_i over the same components, X_i = S_cp,i − S_cg |
+| `sum_CNaX` | 5.67 m/rad | Σ CNa_i·X_i over the same components, X_i = S_cp,i − S_cg (restoring moment) |
+| `sum_CNaX2` | 6.41 m²/rad | Σ CNa_i·X_i² over the same components (pitch damping) |
 | `X_cp` | 0.416 m | S_cp − S_cg without the canards (= `sum_CNaX / CNa_tot`) |
 | `CNa_can` | 2.31 /rad | canard set alone |
 | `X_cp_can` | −0.389 m | S_cp − S_cg of the canards (ahead of the CG) |
 | `Y_cp_can` | 0.091 m | radial arm of a canard's CP from the axis |
-| `mass`, `inertia` | 16.5 kg, 3×3 array | dry (after burnout), about the CG, body axes |
+| `canard_angles_deg` | 0, 90, 180, 270 | roll position of each canard, from body +y towards +z |
+| `CD0` | 0.41 | zero-lift drag coefficient in the coast, on `Sref` |
+| `mass`, `S_cg`, `inertia` | 16.5 kg, 1.187 m, 3×3 array | dry (after burnout) |
+| `mass_wet`, `S_cg_wet`, `inertia_wet` | 18.3 kg, 1.229 m, 3×3 array | at liftoff |
+| `inertia_fincan_roll` | 0.026 kg m² | roll inertia of the fin can alone |
+| `burn_time` | 2.1 s | |
 
-Lift slopes are per rad, referenced to `Sref`, at `model_mach` (default 0.3). Four fins count as the two
-that lift in a pitch plane. A value set in the config's `params` replaces the computed one. These numbers
-come from the simulation's own model, so they are better than a real rocket's estimates. They are also
-simplified: one Mach number, dry CG (the CG is further aft during the boost), no body crossflow lift, no canard
-downwash on the tail fins, no roll damping. `vertical_hold` and `pad_hold` have these fields but don't use them.
+With them, the linearised pitch dynamics about the CG are
+I_yy·θ̈ = −q̄·Sref·`sum_CNaX`·α − q̄·Sref·(`sum_CNaX2`/V)·θ̇ + canard moment.
+
+* **Units and conventions:** lift slopes are per rad, referenced to `Sref`, at `model_mach` (default 0.3).
+  Stations S are measured aft from the nose tip. The arms X are taken from the dry CG. Inertias are about the
+  CG in body axes, with the fin can counted as locked to the body. Four fins count as the two that lift in a
+  pitch plane.
+* **Nominal rocket:** the values are the rocket as designed. The `disturbances` section (CG offset,
+  misalignments, fin-can imbalance, thrust and drag scale) is left out, because the team wouldn't know those
+  errors.
+* **Overrides:** a value set in the config's `params` replaces the computed one.
+* **Simplifications:** the values come from the simulation's own model, so they are better than a real
+  rocket's estimates. They are also simplified: one Mach number, no body crossflow lift, no canard downwash
+  on the tail fins, no roll damping. The CG is further aft during the boost, so the arms are shorter then.
+* **Examples:** `vertical_hold` and `pad_hold` have these fields but don't use them.
 
 ### Conventions
 

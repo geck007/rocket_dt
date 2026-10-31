@@ -40,6 +40,9 @@ def test_airframe_constants(root):
     p = make_controller(parse_config(copy.deepcopy(raw), root / "configs"), rk).p
     assert p.Sref == pytest.approx(rk.aero.ref_area)
     assert p.X_cp == pytest.approx(p.sum_CNaX / p.CNa_tot)
+    assert p.sum_CNaX2 > p.sum_CNaX ** 2 / p.CNa_tot  # Cauchy-Schwarz: the arms are not all equal
+    assert p.canard_angles_deg == pytest.approx([0.0, 90.0, 180.0, 270.0])
+    assert p.mass_wet > p.mass and p.S_cg_wet > p.S_cg and 0.2 < p.CD0 < 1.0
     assert p.X_cp_can < 0.0 < p.X_cp  # canards ahead of the CG, rocket stable without them
     assert p.CNa_can > 0.0 and p.Y_cp_can > rk.aero.ref_length / 2
     # the full model adds the canards' downwash on the tail fins, which lowers the total a little
@@ -48,6 +51,13 @@ def test_airframe_constants(root):
     dry = rk.mass.at(1e3)
     assert p.mass == pytest.approx(dry.mass) and p.inertia.shape == (3, 3)
     np.testing.assert_allclose(p.inertia, dry.inertia)
+    # build errors are unknown to the team: the constants are the nominal rocket's
+    disturbed = copy.deepcopy(raw)
+    disturbed["disturbances"] = {"cg_offset_mm": [20.0, 0.0], "inertia_axis_tilt_deg": [3.0, 0.0]}
+    cfg_d = parse_config(disturbed, root / "configs")
+    p_d = make_controller(cfg_d, build_rocket(cfg_d)).p
+    assert p_d.S_cg == p.S_cg and p_d.sum_CNaX2 == p.sum_CNaX2
+    np.testing.assert_array_equal(p_d.inertia, p.inertia)
     raw["controller"]["params"] |= {"CNa_can": 3.0, "inertia": [[0.05, 0, 0], [0, 6, 0], [0, 0, 6]]}
     p = make_controller(parse_config(copy.deepcopy(raw), root / "configs"), rk).p
     assert p.CNa_can == 3.0 and p.inertia[1, 1] == 6.0  # config values win
